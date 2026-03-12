@@ -19,11 +19,22 @@ def load_logs():
 
 rows = load_logs()
 
-if "selected_row" not in st.session_state:
-    st.session_state.selected_row = None
-
+# Always keep one row selected
 if "selected_row_index" not in st.session_state:
-    st.session_state.selected_row_index = None
+    st.session_state.selected_row_index = 0
+
+if "selected_row" not in st.session_state:
+    st.session_state.selected_row = rows[0] if rows else None
+
+# Safety fallback if rows are empty or index goes out of range
+if rows:
+    if st.session_state.selected_row_index >= len(rows):
+        st.session_state.selected_row_index = 0
+    st.session_state.selected_row = rows[st.session_state.selected_row_index]
+else:
+    st.session_state.selected_row = None
+    st.session_state.selected_row_index = 0
+
 
 st.markdown(
     """
@@ -41,50 +52,18 @@ st.markdown(
         padding-bottom: 2rem;
     }
 
-    /* Put the grey wrapper on the full-width COLUMN, not the parent block */
-    div[data-testid="stColumn"]:has(#dashboard-shell-anchor) {
-        background: rgba(29,29,34,0.92);
-        border: 1px solid rgba(255,255,255,0.05);
-        border-radius: 22px;
-        padding: 0 24px 18px 24px;
-        box-shadow: 0 12px 40px rgba(0,0,0,0.22);
-        overflow: hidden;
-    }
-
-    #dashboard-shell-anchor {
-        height: 0;
-        margin: 0;
-        padding: 0;
-    }
-
     .hero-wrap {
         position: relative;
         height: 110px;
-        margin-left: -24px;
-        margin-right: -24px;
-        margin-bottom: 1.8rem;
         display: flex;
         align-items: center;
-        overflow: hidden;
-        border-top-left-radius: 22px;
-        border-top-right-radius: 22px;
+        margin-bottom: 0.8rem;
     }
 
-  .top-band {
-    position: absolute;
-    inset: 0;
-    background: #14141a;
-    border-bottom: none;
-    z-index: 0;
-}
-
     .title {
-        position: relative;
-        z-index: 1;
         font-size: 24px;
         font-weight: 700;
         color: #e9e9ff;
-        margin-left: 32px;
     }
 
     .reports-title {
@@ -92,7 +71,6 @@ st.markdown(
         font-size: 22px;
         font-weight: 700;
         margin-bottom: 26px;
-        padding-left: 4px;
     }
 
     .table-header {
@@ -104,11 +82,6 @@ st.markdown(
         text-align: left;
         display: flex;
         justify-content: flex-start;
-    }
-
-    div[data-testid="stColumn"] .table-header {
-        text-align: left !important;
-        justify-content: flex-start !important;
     }
 
     .cell-muted {
@@ -201,7 +174,9 @@ st.markdown(
         font-size: 11px;
         font-weight: 700;
         line-height: 1;
-        display: block;
+        display: flex;
+        align-items: center;
+        justify-content: center;
         margin: 0 auto;
     }
 
@@ -210,111 +185,97 @@ st.markdown(
         color: #9a69ff;
         background: rgba(123,60,255,0.08);
     }
-
-    /* active eye button */
-    div[data-testid="stButton"] > button[kind="secondary"] {
-        border-color: #ff4d4d;
-        color: #ff4d4d;
-        background: rgba(255,77,77,0.08);
-    }
     </style>
     """,
     unsafe_allow_html=True,
 )
 
-# REPORTS WRAPPER INSIDE A FULL-WIDTH COLUMN
-shell_left, = st.columns([1])
+st.markdown(
+    """
+    <div class="hero-wrap">
+        <div class="title">IBM Lab Dashboard</div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
-with shell_left:
-    st.markdown('<div id="dashboard-shell-anchor"></div>', unsafe_allow_html=True)
+st.markdown('<div class="reports-title">Reports</div>', unsafe_allow_html=True)
 
-    st.markdown(
-        """
-        <div class="hero-wrap">
-            <div class="top-band"></div>
-            <div class="title">IBM Lab Dashboard</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+widths = [1.2, 1.7, 1.9, 0.7, 0.8, 1.2, 1.0]
+h1, h2, h3, h4, h5, h6, h7 = st.columns(widths)
 
-    st.markdown('<div class="reports-title">Reports</div>', unsafe_allow_html=True)
+headers = [
+    "Date",
+    "Proposed Action",
+    "Threat Type",
+    "Risk",
+    "Cum",
+    "Agent State",
+    "Rule Triggered",
+]
 
-    widths = [1.2, 1.7, 1.9, 0.7, 0.8, 1.2, 1.0]
-    h1, h2, h3, h4, h5, h6, h7 = st.columns(widths)
+for col, header in zip([h1, h2, h3, h4, h5, h6, h7], headers):
+    with col:
+        st.markdown(
+            f'<div class="table-header">{header}</div>',
+            unsafe_allow_html=True,
+        )
 
-    headers = [
-        "Date",
-        "Proposed Action",
-        "Threat Type",
-        "Risk",
-        "Cum",
-        "Agent State",
-        "Rule Triggered",
-    ]
+for i, row in enumerate(rows):
+    c1, c2, c3, c4, c5, c6, c7 = st.columns(widths)
 
-    for col, header in zip([h1, h2, h3, h4, h5, h6, h7], headers):
-        with col:
-            st.markdown(
-                f'<div class="table-header">{header}</div>',
-                unsafe_allow_html=True,
-            )
+    with c1:
+        st.markdown(
+            f'<div class="cell-muted">{row["date"]}</div>',
+            unsafe_allow_html=True,
+        )
 
-    for i, row in enumerate(rows):
-        c1, c2, c3, c4, c5, c6, c7 = st.columns(widths)
+    with c2:
+        st.markdown(
+            f'<div class="cell">{row["proposed_action"]}</div>',
+            unsafe_allow_html=True,
+        )
 
-        with c1:
-            st.markdown(
-                f'<div class="cell-muted">{row["date"]}</div>',
-                unsafe_allow_html=True,
-            )
-        with c2:
-            st.markdown(
-                f'<div class="cell">{row["proposed_action"]}</div>',
-                unsafe_allow_html=True,
-            )
-        with c3:
-            st.markdown(
-                f'<div class="cell">{row["threat_type"]}</div>',
-                unsafe_allow_html=True,
-            )
-        with c4:
-            st.markdown(
-                f'<div class="cell">{row["risk"]}</div>',
-                unsafe_allow_html=True,
-            )
-        with c5:
-            st.markdown(
-                f'<div class="cell">{row["cum"]}</div>',
-                unsafe_allow_html=True,
-            )
-        with c6:
-            state_class = {
-                "Running": "pill-running",
-                "Prevented": "pill-prevented",
-                "Cancelled": "pill-cancelled",
-            }.get(row["agent_state"], "pill-running")
+    with c3:
+        st.markdown(
+            f'<div class="cell">{row["threat_type"]}</div>',
+            unsafe_allow_html=True,
+        )
 
-            st.markdown(
-                f'<span class="pill {state_class}">{row["agent_state"]}</span>',
-                unsafe_allow_html=True,
-            )
+    with c4:
+        st.markdown(
+            f'<div class="cell">{row["risk"]}</div>',
+            unsafe_allow_html=True,
+        )
 
-        with c7:
-            is_selected = st.session_state.selected_row_index == i
-            if st.button("◉", key=f"view_{i}", type="secondary" if is_selected else "secondary"):
-                if is_selected:
-                    st.session_state.selected_row = None
-                    st.session_state.selected_row_index = None
-                else:
-                    st.session_state.selected_row = row
-                    st.session_state.selected_row_index = i
+    with c5:
+        st.markdown(
+            f'<div class="cell">{row["cum"]}</div>',
+            unsafe_allow_html=True,
+        )
 
-        st.markdown('<div class="row-divider"></div>', unsafe_allow_html=True)
+    with c6:
+        state_class = {
+            "Running": "pill-running",
+            "Prevented": "pill-prevented",
+            "Cancelled": "pill-cancelled",
+        }.get(row["agent_state"], "pill-running")
 
-# DETAIL CARD OUTSIDE THE GREY WRAPPER
+        st.markdown(
+            f'<span class="pill {state_class}">{row["agent_state"]}</span>',
+            unsafe_allow_html=True,
+        )
+
+    with c7:
+        if st.button("◉", key=f"view_{i}"):
+            st.session_state.selected_row = row
+            st.session_state.selected_row_index = i
+
+    st.markdown('<div class="row-divider"></div>', unsafe_allow_html=True)
+
 if st.session_state.selected_row is not None:
     selected = st.session_state.selected_row
+
     left, right = st.columns([1, 2.2])
 
     with left:
