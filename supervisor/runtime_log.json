@@ -1,22 +1,72 @@
 [
   {
+    "agent": "disbursement_agent",
+    "action": "DELETE_FILE",
+    "risk_score": 60,
+    "date": "March 1, 2026",
+    "proposed_action": "DELETE_FILE",
+    "threat_type": "DESTRUCTIVE_ACTION",
+    "risk": "+60",
+    "cum": "60/100",
+    "agent_state": "Prevented",
+    "rule_triggered": "DELETE_FILE outside policy boundary",
+    "detail_title": "Rule Triggered for DELETE_FILE",
+    "detail_body": "Thu Feb 26 7:23PM: DELETE_FILE outside policy boundary\nThu Feb 26 7:24PM: MANUAL_RESET"
+  },
+  {
     "agent": "intake_agent",
-    "action": "read_database",
-    "risk_score": 0.10
+    "action": "SEND_DATA",
+    "risk_score": 80,
+    "date": "March 1, 2026",
+    "proposed_action": "SEND_DATA",
+    "threat_type": "DATA_EXFILTRATION",
+    "risk": "+80",
+    "cum": "80/100",
+    "agent_state": "Cancelled",
+    "rule_triggered": "DATA_EXFILTRATION",
+    "detail_title": "Rule Triggered for SEND_DATA",
+    "detail_body": "Thu Feb 26 7:24PM: DATA_EXFILTRATION\nThu Feb 26 7:24PM: MANUAL_RESET"
   },
   {
     "agent": "eligibility_agent",
-    "action": "verify_income",
-    "risk_score": 0.28
+    "action": "MODIFY_ROLE",
+    "risk_score": 100,
+    "date": "March 2, 2026",
+    "proposed_action": "MODIFY_ROLE",
+    "threat_type": "PRIVILEGE_ESCALATION",
+    "risk": "+100",
+    "cum": "100/100",
+    "agent_state": "Cancelled",
+    "rule_triggered": "PRIVILEGE_ESCALATION",
+    "detail_title": "Rule Triggered for MODIFY_ROLE",
+    "detail_body": "Thu Feb 26 7:25PM: PRIVILEGE_ESCALATION\nThu Feb 26 7:26PM: MANUAL_RESET"
   },
   {
     "agent": "disbursement_agent",
-    "action": "trigger_payment",
-    "risk_score": 0.92
+    "action": "FILE_WRITE",
+    "risk_score": 30,
+    "date": "March 3, 2026",
+    "proposed_action": "FILE_WRITE",
+    "threat_type": "TOOL_MISUSE",
+    "risk": "+30",
+    "cum": "30/100",
+    "agent_state": "Prevented",
+    "rule_triggered": "WRITE_OUTSIDE_SANDBOX",
+    "detail_title": "Rule Triggered for FILE_WRITE",
+    "detail_body": "Thu Feb 26 7:23PM: WRITE_OUTSIDE_SANDBOX\nThu Feb 26 7:24PM: AGENT_RESET"
   },
   {
-    "agent": "disbursement_agent",
-    "action": "export_applicant_data",
-    "risk_score": 0.87
+    "agent": "intake_agent",
+    "action": "READ_FILE",
+    "risk_score": 0,
+    "date": "March 3, 2026",
+    "proposed_action": "READ_FILE",
+    "threat_type": "NONE",
+    "risk": "+0",
+    "cum": "0/100",
+    "agent_state": "Running",
+    "rule_triggered": "ALLOW",
+    "detail_title": "Rule Triggered for READ_FILE",
+    "detail_body": "Thu Feb 26 7:23PM: ALLOW"
   }
 ]
