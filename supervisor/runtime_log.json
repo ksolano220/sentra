@@ -1,0 +1,17 @@
+[
+  {
+    "agent": "intake_agent",
+    "action": "read_database",
+    "risk_score": 0.12
+  },
+  {
+    "agent": "eligibility_agent",
+    "action": "verify_income",
+    "risk_score": 0.32
+  },
+  {
+    "agent": "disbursement_agent",
+    "action": "trigger_payment",
+    "risk_score": 0.91
+  }
+]

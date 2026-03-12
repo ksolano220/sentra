@@ -119,6 +119,46 @@ This allows operators to observe how the runtime supervisor evaluates agent beha
 
 ---
 
+# Runtime Event Logging
+
+Sentra records each evaluated agent action in a runtime event log.
+
+The supervisor writes events to:
+
+supervisor/runtime_log.json
+
+Each time an agent action is evaluated, the supervisor records:
+
+- agent identifier  
+- proposed action  
+- calculated risk score  
+
+Example event:
+
+{
+  "agent": "intake_agent",
+  "action": "read_database",
+  "risk_score": 0.12
+}
+
+The monitoring dashboard reads this runtime event log to display system behavior.
+
+Execution flow:
+
+AI Agent  
+↓  
+Sentra Supervisor  
+↓  
+Policy Evaluation  
+↓  
+Risk Score Assignment  
+↓  
+Runtime Event Log  
+↓  
+Monitoring Dashboard  
+
+---
+
 # Agent Action Format
 
 Agents must generate structured action proposals.
