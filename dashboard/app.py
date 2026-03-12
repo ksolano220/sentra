@@ -41,14 +41,13 @@ st.markdown(
         padding-bottom: 2rem;
     }
 
-    /* Grey wrapper for header + reports table only */
-    div[data-testid="stVerticalBlock"]:has(#dashboard-shell-anchor) {
+    /* Put the grey wrapper on the full-width COLUMN, not the parent block */
+    div[data-testid="stColumn"]:has(#dashboard-shell-anchor) {
         background: rgba(29,29,34,0.92);
         border: 1px solid rgba(255,255,255,0.05);
         border-radius: 22px;
         padding: 0 24px 18px 24px;
         box-shadow: 0 12px 40px rgba(0,0,0,0.22);
-        margin-bottom: 26px;
         overflow: hidden;
     }
 
@@ -71,13 +70,13 @@ st.markdown(
         border-top-right-radius: 22px;
     }
 
-    .top-band {
-        position: absolute;
-        inset: 0;
-        background: #14141a;
-        border-bottom: 1px solid rgba(120,70,255,0.28);
-        z-index: 0;
-    }
+  .top-band {
+    position: absolute;
+    inset: 0;
+    background: #14141a;
+    border-bottom: none;
+    z-index: 0;
+}
 
     .title {
         position: relative;
@@ -158,7 +157,7 @@ st.markdown(
     }
 
     .detail-card {
-        margin-top: 8px;
+        margin-top: 22px;
         width: 430px;
         background: rgba(40,40,48,0.96);
         border: 1px solid rgba(255,255,255,0.06);
@@ -179,11 +178,6 @@ st.markdown(
         color: #f0f0f4;
         line-height: 1.8;
         white-space: pre-line;
-    }
-
-    div[data-testid="stColumn"]:last-child {
-        padding-left: 0 !important;
-        padding-right: 0 !important;
     }
 
     div[data-testid="stButton"] {
@@ -216,14 +210,22 @@ st.markdown(
         color: #9a69ff;
         background: rgba(123,60,255,0.08);
     }
+
+    /* active eye button */
+    div[data-testid="stButton"] > button[kind="secondary"] {
+        border-color: #ff4d4d;
+        color: #ff4d4d;
+        background: rgba(255,77,77,0.08);
+    }
     </style>
     """,
     unsafe_allow_html=True,
 )
 
-dashboard_shell = st.container()
+# REPORTS WRAPPER INSIDE A FULL-WIDTH COLUMN
+shell_left, = st.columns([1])
 
-with dashboard_shell:
+with shell_left:
     st.markdown('<div id="dashboard-shell-anchor"></div>', unsafe_allow_html=True)
 
     st.markdown(
@@ -300,9 +302,7 @@ with dashboard_shell:
 
         with c7:
             is_selected = st.session_state.selected_row_index == i
-            button_label = "◉" if not is_selected else "◉"
-
-            if st.button(button_label, key=f"view_{i}"):
+            if st.button("◉", key=f"view_{i}", type="secondary" if is_selected else "secondary"):
                 if is_selected:
                     st.session_state.selected_row = None
                     st.session_state.selected_row_index = None
@@ -312,10 +312,9 @@ with dashboard_shell:
 
         st.markdown('<div class="row-divider"></div>', unsafe_allow_html=True)
 
-# Detail card OUTSIDE the grey wrapper
+# DETAIL CARD OUTSIDE THE GREY WRAPPER
 if st.session_state.selected_row is not None:
     selected = st.session_state.selected_row
-
     left, right = st.columns([1, 2.2])
 
     with left:
