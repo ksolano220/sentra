@@ -1,137 +1,138 @@
-# sentra
-Runtime Governance Layer for Autonomous Public Service Agents
-Problem: Governments are beginning to deploy autonomous AI agents to process public benefit claims, interact with citizen records, and automate administrative workflows. 
+# Sentra
 
-These agents operate with increasing execution autority over:
-Citizen PII
-Public funds
-System-of-record databases
-External APIs and services
+Sentra is a prototype runtime supervision layer for AI agents.
 
-Traditional logging captures actions after they occur. IT does not prevent:
-Unauthorized data transmission
-Policy violations
-Improper disbursement 
-System-of-record corruption
+The system demonstrates how a control layer can intercept agent actions, evaluate risk, and determine whether those actions should be allowed to execute.
 
-Sentra demonstrates a lightweight runtime supervision layer that intercepts high-risk agent actions before execution, preserving transparency, compliance, and public trust
+Instead of allowing agents to directly call tools or APIs, Sentra introduces an inline runtime layer that monitors behavior and enforces safety policies.
 
-Solutions Overview
-Sentra sits between an autonomous agent and the system it interacts with.
-Every agent action must pass through a monitoring API that: 
-1. Applies deterministic enforcement rules
-2. Uses IBM watsonx to interpret ambiguous policy contraints
-3. Assigns cumlative risk scores
-4. Prevents or cancels execution when risk exceeds treshold
-This transforms post-hoc logging into real-time execution control.
+The agent proposes actions.
+Sentra decides whether they execute.
 
-Architecture Diagram
-               ┌──────────────────────────┐
-               │  Autonomous AI Agent     │
-               │  (Python Simulation)     │
-               └─────────────┬────────────┘
-                             │
-                POST /agent-action
-                             │
-               ┌─────────────▼────────────┐
-               │   Sentra Monitoring API  │
-               │        (FastAPI)         │
-               ├──────────────────────────┤
-               │ Deterministic Rule Engine│
-               │ watsonx Policy Classifier│
-               │ Risk Scoring Engine      │
-               │ Intervention Controller  │
-               └─────────────┬────────────┘
-                             │
-                  Decision: ALLOW / PREVENT / CANCEL
-                             │
-               ┌─────────────▼────────────┐
-               │       Governance         │
-               │        Dashboard         │
-               └──────────────────────────┘
 
-Threat Model Summary
-Sentra focuses on runtime risks within public-sector agent workflows. 
+# Project Goal
 
-Assests Protected
-Citizen PII
-Public benefit disbursement controls 
-Government system-of-record integrity
-Authorized tool and API usage
-Policy compliance
+This project explores runtime governance for autonomous AI agents.
 
-Core Threat Categories
-1. Authorization Boundary Violations
-Agent attempts to access tools or resources outside approved scope.
-2. Policy & Compliance Breaches
-Agent behavior conflicts with eligible rules, robots,txt, or governance contraints.
-3. Confidentiality & Data Exfiltration Risks
-Sensitive data is transmitted to unauthorized external destinations.
-4. Integrity & Improper Disbursement Risks
-Agent writes unverified or fabricated data into public system or triggers unauthorized payouts.
+The prototype demonstrates how a control layer can:
 
-Each threat category maps to deterministic test cases and observable logging signals. 
+- intercept agent tool calls
+- apply policy rules
+- calculate risk scores
+- decide whether actions should execute
 
-Demo Flow 
-1. Agent starts in active state.
-2. Agent performs compliant action → Risk remains low.
-3. Agent attempts high-risk action (e.g., unauthorized data transmission).
-4. Monitoring API evaluates action.
-5. Rule engine and/or watsonx classification increases risk score.
-6. Cumulative risk crosses threshold.
-7. Agent execution is automatically halted.
-8. Dashboard displays violation, triggered rules, and risk delta.
+The system focuses on detecting unsafe sequences such as:
 
-This demonstrates live runtime interception, not post-event analysis.
+- large financial transfers
+- unauthorized data access
+- data exfiltration attempts
 
-How to run locally
-1. Clone repository
-git clone https://github.com/yourusername/sentra.git
-cd sentra
 
-2. Create virtual environment
-python -m venv venv
-source venv/bin/activate   # Mac/Linux
-venv\Scripts\activate      # Windows
+# System Architecture
 
-3. Install dependancies
-pip install -r requirements.txt
+Execution pipeline:
 
-4. Set environment variables
-Create a .env file:
-IBM_API_KEY=your_key_here
-IBM_PROJECT_ID=your_project_id
-IBM_URL=https://us-south.ml.cloud.ibm.com
-Do not commit this file.
+AI Agent
+↓
+Sentra Runtime Interceptor
+↓
+Policy Rules
+↓
+Risk Engine
+↓
+Execution Decision
+↓
+Tool Environment
+↓
+Monitoring Dashboard
 
-5. Start monitoring API
-uvicorn supervisor.main:app --reload
+The AI agent generates actions as part of a workflow.
+Sentra intercepts those actions before they reach external systems.
 
-6. Run agent simulation
-python agent/simulated_agent.py
 
-7. Launch dashboard
-If using Streamlit:
-streamlit run dashboard/app.py
+# Repository Structure
 
-IBM watsonx Usage
-Sentra integrates IBM watsonx for semantic policy interpretation.
-watsonx is used to: 
-Classify ambiguous policy language as ALLOWED/ RESTRICTED/ PROHIBITED
-Interpret contractual or eligibility contraints 
-Generate structured risk signals for the scoring engine
+agent/
+    intake_agent.py
+    eligibility_agent.py
+    disbursement_agent.py
+    orchestrator.py
+    tools.py
 
-Deterministic enforcement remains seperate from AI classification.
-watsonx arguments governance - it does not replace rule-based ontrol.
+supervisor/
+    main.py
+    rules.py
+    risk.py
+    storage.py
 
-Pass/Fail Criteria
-A FAIL event occurs when:
-Agent attempts a prohibited action
-Risk threshold is exceeded
-Execution is halted
-Structured violation report is generated
+dashboard/
+    app.py
 
-A PASS event occurs when:
-Agent compltes workflow
-Risk remains below treshold
-No critical violations occur
+docs/
+    architecture.md
+    threat_model.md
+
+
+# Agent Workflow
+
+The agent simulates a public-service processing pipeline.
+
+1. Intake Agent
+   receives applicant data
+
+2. Eligibility Agent
+   evaluates eligibility conditions
+
+3. Disbursement Agent
+   proposes financial actions
+
+Example action output:
+
+{
+  "agent": "disbursement_agent",
+  "action": "transfer_funds",
+  "amount": 5000
+}
+
+These actions are intercepted by the Sentra runtime layer.
+
+
+# Threat Model
+
+The system focuses on detecting risky agent behavior such as:
+
+- excessive financial transfers
+- unauthorized data access
+- data exfiltration
+- unsafe multi-step action sequences
+
+The runtime layer assigns risk scores and determines whether actions should be blocked.
+
+See docs/threat_model.md for more details.
+
+
+# Monitoring
+
+All agent actions and runtime decisions are logged to a monitoring dashboard.
+
+The dashboard provides visibility into:
+
+- agent behavior
+- risk scores
+- rule violations
+- execution decisions
+
+
+# Prototype Scope
+
+This project demonstrates the feasibility of runtime supervision for AI agents.
+
+It is not intended to be a full governance platform.
+The objective is to prove that an inline runtime layer can intercept and control agent tool usage.
+
+
+# IBM AI Experiential Learning Lab
+
+This project is being developed as part of the IBM SkillsBuild AI Experiential Learning Lab.
+
+The prototype demonstrates how runtime controls can improve the safety of autonomous AI systems.
