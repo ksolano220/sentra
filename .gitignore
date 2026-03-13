@@ -1,0 +1,15 @@
+# Python cache
+__pycache__/
+*.pyc
+
+# Virtual environment
+.venv/
+
+# Environment variables
+.env
+
+# Runtime logs
+supervisor/runtime_log.json
+
+# Mac OS files
+.DS_Store
