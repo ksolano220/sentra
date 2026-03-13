@@ -2,10 +2,10 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 import json
 from pathlib import Path
+from datetime import datetime
 
 app = FastAPI(title="Sentra Supervisor")
 
-# Log file used by the governance dashboard
 LOG_FILE = Path("supervisor/runtime_log.json")
 
 
@@ -17,47 +17,89 @@ class AgentAction(BaseModel):
     destination_type: str
 
 
-def log_event(agent, action, risk_score):
-    """
-    Writes evaluated agent actions to runtime_log.json.
-    The Streamlit governance dashboard reads this file to display
-    agent behavior and associated risk scores.
-    """
-
-    event = {
-        "agent": agent,
-        "action": action,
-        "risk_score": risk_score
-    }
-
-    logs = []
+def load_logs():
     if LOG_FILE.exists():
-        logs = json.load(open(LOG_FILE))
+        with open(LOG_FILE, "r") as f:
+            return json.load(f)
+    return []
 
-    logs.append(event)
 
+def save_logs(logs):
     with open(LOG_FILE, "w") as f:
         json.dump(logs, f, indent=2)
 
 
+def get_cumulative_risk(agent_id, logs):
+    total = 0
+    for log in logs:
+        if log["agent"] == agent_id:
+            total += log["risk_score"]
+    return total
+
+
+def log_event(agent, action, risk_score, cumulative_risk, decision, threat_type, rule_triggered):
+    event = {
+        "agent": agent,
+        "action": action,
+        "risk_score": risk_score,
+        "timestamp": datetime.now().isoformat(),
+        "proposed_action": action,
+        "threat_type": threat_type,
+        "risk": f"+{risk_score}",
+        "cum": f"{cumulative_risk}/100",
+        "agent_state": decision,
+        "rule_triggered": rule_triggered,
+        "detail_title": f"Rule Triggered for {action}",
+        "detail_body": f"{datetime.now().strftime('%a %b %d %I:%M%p')}: {rule_triggered}"
+    }
+
+    logs = load_logs()
+    logs.append(event)
+    save_logs(logs)
+
+
 @app.post("/agent-action")
 def evaluate_action(action: AgentAction):
+    logs = load_logs()
 
     decision = "ALLOW"
     risk_delta = 0
-    cumulative_risk = 0
+    threat_type = "NONE"
+    rule_triggered = "No rule triggered"
 
-    # Example policy rule
     if action.data_classification == "sensitive" and action.destination_type == "external":
-        decision = "HALT"
+        decision = "BLOCK"
         risk_delta = 80
-        cumulative_risk = 80
+        threat_type = "DATA_EXFILTRATION"
+        rule_triggered = "Sensitive data cannot be sent to an external destination"
 
-    # Log the evaluated action so the dashboard can monitor runtime behavior
-    log_event(action.agent_id, action.action_type, risk_delta)
+    elif action.action_type == "DELETE_FILE":
+        decision = "BLOCK"
+        risk_delta = 60
+        threat_type = "DESTRUCTIVE_ACTION"
+        rule_triggered = "DELETE_FILE outside policy boundary"
+
+    cumulative_risk = get_cumulative_risk(action.agent_id, logs) + risk_delta
+
+    if cumulative_risk >= 100 and decision == "ALLOW":
+        decision = "REQUIRE_HUMAN_REVIEW"
+        threat_type = "RISK_THRESHOLD"
+        rule_triggered = "Cumulative risk exceeded review threshold"
+
+    log_event(
+        agent=action.agent_id,
+        action=action.action_type,
+        risk_score=risk_delta,
+        cumulative_risk=cumulative_risk,
+        decision=decision,
+        threat_type=threat_type,
+        rule_triggered=rule_triggered
+    )
 
     return {
         "decision": decision,
         "risk_delta": risk_delta,
-        "cumulative_risk": cumulative_risk
+        "cumulative_risk": cumulative_risk,
+        "threat_type": threat_type,
+        "rule_triggered": rule_triggered
     }
