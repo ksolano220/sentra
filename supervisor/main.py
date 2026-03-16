@@ -7,6 +7,7 @@ from datetime import datetime
 app = FastAPI(title="Sentra Supervisor")
 
 LOG_FILE = Path("supervisor/runtime_log.json")
+RISK_THRESHOLD = 100
 
 
 class AgentAction(BaseModel):
@@ -19,21 +20,25 @@ class AgentAction(BaseModel):
 
 def load_logs():
     if LOG_FILE.exists():
-        with open(LOG_FILE, "r") as f:
-            return json.load(f)
+        try:
+            with open(LOG_FILE, "r") as f:
+                data = json.load(f)
+                return data if isinstance(data, list) else []
+        except (json.JSONDecodeError, FileNotFoundError):
+            return []
     return []
 
 
 def save_logs(logs):
+    LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
     with open(LOG_FILE, "w") as f:
         json.dump(logs, f, indent=2)
 
 
-def get_cumulative_risk(agent_id, logs):
+def get_cumulative_risk(logs):
     total = 0
     for log in logs:
-        if log.get("agent") == agent_id:
-            total += log.get("risk_score", 0)
+        total += log.get("risk_score", 0)
     return total
 
 
@@ -93,7 +98,7 @@ def log_event(
         "proposed_action": action,
         "threat_type": threat_type,
         "risk": f"+{risk_score}",
-        "cum": f"{cumulative_risk}/100",
+        "cum": f"{cumulative_risk}/{RISK_THRESHOLD}",
         "agent_state": decision,
         "rule_triggered": rule_triggered,
         "detail_title": detail_title,
@@ -112,11 +117,7 @@ def evaluate_action(action: AgentAction):
     logs = load_logs()
     trace_time = now_trace()
 
-    decision = "ALLOW"
-    risk_delta = 0
-    threat_type = "NONE"
-    rule_triggered = "NULL"
-    detail_title = "NULL"
+    current_cumulative_risk = get_cumulative_risk(logs)
 
     event_trace = [
         f"{trace_time} Agent attempted {action.action_type}",
@@ -124,58 +125,103 @@ def evaluate_action(action: AgentAction):
         f"{trace_time} Target: {action.target}",
     ]
 
-    # Rule evaluation
-    if action.data_classification == "sensitive" and action.destination_type == "external":
+    # HARD RISK THRESHOLD CHECK FIRST
+    if current_cumulative_risk >= RISK_THRESHOLD:
+        decision = "REQUIRE_HUMAN_REVIEW"
+        risk_delta = 0
+        threat_type = "RISK_THRESHOLD"
+        rule_triggered = "Cumulative risk exceeded review threshold"
+        detail_title = "RISK_THRESHOLD"
+
+        event_trace.append(f"{trace_time} RISK_THRESHOLD policy triggered")
+        event_trace.append(f"{trace_time} Action cancelled before rule evaluation")
+
+        system_response = build_system_response(decision)
+        event_trace.append(f"{trace_time} System response: {system_response}")
+
+        detail_body = f"{now_display()}: {rule_triggered}"
+
+        log_event(
+            agent=action.agent_id,
+            action=action.action_type,
+            target=action.target,
+            data_classification=action.data_classification,
+            destination_type=action.destination_type,
+            risk_score=risk_delta,
+            cumulative_risk=current_cumulative_risk,
+            decision=map_agent_state(decision),
+            threat_type=threat_type,
+            rule_triggered=rule_triggered,
+            detail_title=detail_title,
+            detail_body=detail_body,
+            system_response=system_response,
+            event_trace=event_trace,
+        )
+
+        return {
+            "decision": decision,
+            "risk_delta": risk_delta,
+            "cumulative_risk": current_cumulative_risk,
+            "threat_type": threat_type,
+            "rule_triggered": rule_triggered,
+            "detail_title": detail_title,
+            "system_response": system_response,
+            "event_trace": event_trace,
+        }
+
+    decision = "ALLOW"
+    risk_delta = 0
+    threat_type = "NONE"
+    rule_triggered = "No rule triggered"
+    detail_title = "NONE"
+
+    external_destinations = {"external", "external_api", "third_party_api"}
+
+    if (
+        action.data_classification.lower() == "sensitive"
+        and action.destination_type.lower() in external_destinations
+    ):
         decision = "BLOCK"
         risk_delta = 80
         threat_type = "DATA_EXFILTRATION"
         rule_triggered = "Sensitive data cannot be sent to an external destination"
         detail_title = "DATA_EXFILTRATION"
 
-    elif action.action_type == "DELETE_FILE":
+    elif action.action_type.upper() == "DELETE_FILE":
         decision = "BLOCK"
         risk_delta = 60
         threat_type = "DESTRUCTIVE_ACTION"
         rule_triggered = "DELETE_FILE outside policy boundary"
         detail_title = "DESTRUCTIVE_ACTION"
 
-    # Trace policy outcome
+    elif action.action_type.upper() == "MODIFY_ROLE":
+        decision = "BLOCK"
+        risk_delta = 100
+        threat_type = "PRIVILEGE_ESCALATION"
+        rule_triggered = "Unauthorized privilege escalation attempt"
+        detail_title = "PRIVILEGE_ESCALATION"
+
     if threat_type != "NONE":
         event_trace.append(f"{trace_time} {threat_type} policy triggered")
     else:
         event_trace.append(f"{trace_time} No policy violation detected")
 
-    # Risk trace
     if risk_delta > 0:
         event_trace.append(f"{trace_time} Risk score +{risk_delta} applied")
     else:
         event_trace.append(f"{trace_time} No risk increase applied")
 
-    cumulative_risk = get_cumulative_risk(action.agent_id, logs) + risk_delta
+    new_cumulative_risk = current_cumulative_risk + risk_delta
 
-    # Cumulative threshold review
-    if cumulative_risk >= 100 and decision == "ALLOW":
-        decision = "REQUIRE_HUMAN_REVIEW"
-        threat_type = "RISK_THRESHOLD"
-        rule_triggered = "Cumulative risk exceeded review threshold"
-        detail_title = "RISK_THRESHOLD"
-        event_trace.append(f"{trace_time} RISK_THRESHOLD policy triggered")
-        event_trace.append(f"{trace_time} Escalated to human review")
-
-    elif decision == "BLOCK":
+    if decision == "BLOCK":
         event_trace.append(f"{trace_time} Tool execution blocked")
-
-    elif decision == "ALLOW":
+    else:
         event_trace.append(f"{trace_time} Execution allowed")
 
     system_response = build_system_response(decision)
     event_trace.append(f"{trace_time} System response: {system_response}")
 
-    detail_body = (
-        f"{now_display()}: {rule_triggered}"
-        if rule_triggered != "NULL"
-        else f"{now_display()}: No rule triggered"
-    )
+    detail_body = f"{now_display()}: {rule_triggered}"
 
     log_event(
         agent=action.agent_id,
@@ -184,7 +230,7 @@ def evaluate_action(action: AgentAction):
         data_classification=action.data_classification,
         destination_type=action.destination_type,
         risk_score=risk_delta,
-        cumulative_risk=cumulative_risk,
+        cumulative_risk=new_cumulative_risk,
         decision=map_agent_state(decision),
         threat_type=threat_type,
         rule_triggered=rule_triggered,
@@ -197,7 +243,7 @@ def evaluate_action(action: AgentAction):
     return {
         "decision": decision,
         "risk_delta": risk_delta,
-        "cumulative_risk": cumulative_risk,
+        "cumulative_risk": new_cumulative_risk,
         "threat_type": threat_type,
         "rule_triggered": rule_triggered,
         "detail_title": detail_title,

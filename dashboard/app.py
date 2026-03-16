@@ -4,6 +4,7 @@ import json
 import html
 from pathlib import Path
 from datetime import datetime
+from textwrap import dedent
 
 import streamlit as st
 
@@ -13,9 +14,6 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 LOG_FILE = BASE_DIR / "supervisor" / "runtime_log.json"
 
 
-# ==========================================================
-# HELPERS
-# ==========================================================
 def parse_dt(value):
     if not value:
         return datetime.min
@@ -46,16 +44,8 @@ def format_timestamp(value):
     return dt.strftime("%Y-%m-%d %H:%M:%S")
 
 
-def safe_text(value, default="NULL"):
-    if value is None:
-        return default
-    text = str(value).strip()
-    return text if text else default
-
-
 def normalize_state(row):
     raw = row.get("agent_state", row.get("decision", ""))
-
     mapping = {
         "ALLOW": "Running",
         "BLOCK": "Prevented",
@@ -64,8 +54,12 @@ def normalize_state(row):
         "Prevented": "Prevented",
         "Cancelled": "Cancelled",
     }
-
     return mapping.get(raw, "Running")
+
+
+def safe_text(value):
+    text = str(value).strip() if value is not None else ""
+    return text if text else "NULL"
 
 
 def load_logs():
@@ -75,87 +69,58 @@ def load_logs():
     return []
 
 
-def build_fallback_trace(row):
-    timestamp = format_timestamp(row.get("timestamp", row.get("date", "")))
-    action = safe_text(row.get("proposed_action", row.get("action", "")), "UNKNOWN_ACTION")
-    threat = safe_text(row.get("threat_type", "NONE"), "NONE")
-    risk = safe_text(row.get("risk", f'+{row.get("risk_score", 0)}'), "+0")
-    state = normalize_state(row)
+def build_event_trace(row, normalized_row):
+    trace = row.get("event_trace")
 
-    trace = [
-        f"{timestamp} Agent attempted {action}",
-        f"{timestamp} Sentra intercepted tool request",
-    ]
+    if isinstance(trace, list):
+        cleaned = [safe_text(item) for item in trace if str(item).strip()]
+        if cleaned:
+            return cleaned
 
-    if threat != "NONE":
-        trace.append(f"{timestamp} {threat} policy triggered")
-    else:
-        trace.append(f"{timestamp} No policy violation detected")
+    if isinstance(trace, str):
+        cleaned = [line.strip() for line in trace.splitlines() if line.strip()]
+        if cleaned:
+            return cleaned
 
-    if risk != "+0":
-        trace.append(f"{timestamp} Risk score {risk} applied")
-    else:
-        trace.append(f"{timestamp} No risk increase applied")
+    detail_body = str(row.get("detail_body", "")).strip()
+    if detail_body:
+        cleaned = [line.strip() for line in detail_body.splitlines() if line.strip()]
+        if cleaned:
+            return cleaned
 
-    if state == "Prevented":
-        trace.append(f"{timestamp} Tool execution blocked")
-    elif state == "Cancelled":
-        trace.append(f"{timestamp} Escalated to human review")
-    else:
-        trace.append(f"{timestamp} Execution allowed")
-
-    return trace
+    return ["NULL"]
 
 
-# ==========================================================
-# LOAD + NORMALIZE LOGS
-# ==========================================================
 raw_rows = load_logs()
 
 rows = []
 for row in raw_rows:
-    timestamp_raw = row.get("timestamp", row.get("date", ""))
-
-    event_trace = row.get("event_trace", [])
-    if not isinstance(event_trace, list) or not event_trace:
-        event_trace = build_fallback_trace(row)
+    timestamp = row.get("timestamp", row.get("date", ""))
 
     normalized = {
-        "timestamp_raw": timestamp_raw,
-        "timestamp": format_timestamp(timestamp_raw),
+        "timestamp_raw": timestamp,
+        "timestamp": format_timestamp(timestamp),
         "proposed_action": safe_text(row.get("proposed_action", row.get("action", ""))),
-        "threat_type": safe_text(row.get("threat_type", "NONE"), "NONE"),
-        "risk": safe_text(row.get("risk", f'+{row.get("risk_score", 0)}'), "+0"),
-        "cum": safe_text(row.get("cum", "0/100"), "0/100"),
+        "threat_type": safe_text(row.get("threat_type", "NONE")),
+        "risk": safe_text(row.get("risk", f'+{row.get("risk_score", 0)}')),
+        "cum": safe_text(row.get("cum", "0/100")),
         "agent_state": normalize_state(row),
-        "rule_triggered": safe_text(row.get("rule_triggered", "NULL")),
-        "detail_title": safe_text(row.get("detail_title", "NULL")),
-        "detail_body": safe_text(row.get("detail_body", "NULL")),
-        "system_response": safe_text(
-            row.get("system_response", "Execution allowed and recorded in Sentra audit log")
-        ),
-        "event_trace": [safe_text(item) for item in event_trace],
+        "detail_title": safe_text(row.get("detail_title", row.get("rule_triggered", ""))),
+        "detail_body": safe_text(row.get("detail_body", row.get("rule_triggered", ""))),
     }
 
+    normalized["event_trace"] = build_event_trace(row, normalized)
     rows.append(normalized)
 
 rows = sorted(rows, key=lambda x: parse_dt(x["timestamp_raw"]), reverse=True)
 rows = rows[:20]
 
-
-# ==========================================================
-# SESSION STATE
-# ==========================================================
 if "selected_index" not in st.session_state:
     st.session_state.selected_index = None
 
 if "selected_row" not in st.session_state:
     st.session_state.selected_row = None
 
-
-# ==========================================================
-# STYLES
-# ==========================================================
 st.markdown(
     """
     <style>
@@ -189,7 +154,7 @@ st.markdown(
         font-size: 22px;
         font-weight: 700;
         color: white;
-        margin-top: 2.6rem;
+        margin-top: 2.2rem;
         margin-bottom: 1.2rem;
     }
 
@@ -236,6 +201,53 @@ st.markdown(
         color: #ff6a57;
     }
 
+    .inspect-card {
+        background: rgba(40,40,48,.96);
+        border-radius: 18px;
+        border: 1px solid rgba(255,255,255,.06);
+        padding: 34px 24px 24px 24px;
+        margin-top: 20px;
+        min-height: 520px;
+    }
+
+    .inspect-title {
+        font-size: 18px;
+        font-weight: 700;
+        color: white;
+        margin-bottom: 24px;
+    }
+
+    .inspect-block {
+        margin-bottom: 22px;
+    }
+
+    .inspect-label {
+        font-size: 13px;
+        font-weight: 700;
+        color: rgba(255,255,255,.72);
+        margin-bottom: 8px;
+    }
+
+    .inspect-value {
+        font-size: 15px;
+        line-height: 1.6;
+        color: #f0f0f4;
+        white-space: pre-line;
+        word-break: break-word;
+    }
+
+    .trace-list {
+        margin: 0;
+        padding-left: 18px;
+    }
+
+    .trace-list li {
+        color: #f0f0f4;
+        font-size: 14px;
+        line-height: 1.7;
+        margin-bottom: 8px;
+    }
+
     div[data-testid="stButton"] {
         display: flex;
         justify-content: center;
@@ -271,20 +283,11 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-
-# ==========================================================
-# HEADER
-# ==========================================================
 st.markdown('<div class="title">IBM Lab Dashboard</div>', unsafe_allow_html=True)
 
 events = len(rows)
 blocked = sum(1 for r in rows if r["agent_state"] in ["Prevented", "Cancelled"])
-
-risk_total = 0
-for r in rows:
-    risk_str = str(r["risk"]).replace("+", "").strip()
-    if risk_str.isdigit():
-        risk_total += int(risk_str)
+risk_total = sum(int(str(r["risk"]).replace("+", "").replace("NULL", "0")) for r in rows if str(r["risk"]).replace("+", "").isdigit())
 
 m1, m2, m3 = st.columns(3)
 
@@ -302,10 +305,6 @@ with m3:
 
 st.markdown('<div class="reports-title">Reports</div>', unsafe_allow_html=True)
 
-
-# ==========================================================
-# MAIN LAYOUT
-# ==========================================================
 table_col, inspect_col = st.columns([3.6, 1.4])
 
 clicked_index = None
@@ -358,112 +357,62 @@ if clicked_index is not None:
     st.session_state.selected_row = rows[clicked_index]
     st.rerun()
 
-
-# ==========================================================
-# SENTRA INSPECTOR PANEL
-# ----------------------------------------------------------
-# THIS IS THE RIGHT-SIDE CARD.
-# If you need to edit the card later, this is the section.
-# ==========================================================
 with inspect_col:
-    selected = st.session_state.get("selected_row")
+    if st.session_state.selected_row is not None:
+        r = st.session_state.selected_row
 
-    if selected:
-        state = selected.get("agent_state", "Running")
+        decision_text = {
+            "Prevented": "Blocked in real time",
+            "Cancelled": "Escalated and halted",
+            "Running": "Allowed to continue",
+        }.get(r.get("agent_state", ""), safe_text(r.get("agent_state", "")))
 
-        if state == "Prevented":
-            sentra_decision = "Execution Blocked"
-        elif state == "Cancelled":
-            sentra_decision = "Human Review Required"
-        else:
-            sentra_decision = "Execution Allowed"
+        system_response = {
+            "Prevented": "Tool call rejected and event logged",
+            "Cancelled": "Execution halted pending review",
+            "Running": "Execution allowed and event logged",
+        }.get(r.get("agent_state", ""), "NULL")
 
-        policy_name = safe_text(selected.get("threat_type", "NONE"), "NONE")
-        policy_reason = safe_text(selected.get("rule_triggered", "NULL"))
-        risk_delta = safe_text(selected.get("risk", "+0"))
-        action_attempted = safe_text(selected.get("proposed_action", "NULL"))
-        system_response = safe_text(
-            selected.get("system_response", "Execution allowed and recorded in Sentra audit log")
+        trace_items = "".join(
+            f"<li>{html.escape(safe_text(item))}</li>"
+            for item in r.get("event_trace", ["NULL"])
         )
 
-        trace = selected.get("event_trace", [])
-        if not trace:
-            trace = ["No runtime events recorded"]
+        inspect_html = f"""
+<div class="inspect-card">
+    <div class="inspect-title">Sentra Enforcement</div>
 
-        st.html(
-            f"""
-            <div style="
-                background: rgba(40,40,48,.96);
-                border-radius: 18px;
-                border: 1px solid rgba(255,255,255,.06);
-                padding: 34px 24px 24px 24px;
-                margin-top: 20px;
-                min-height: 520px;
-                color: white;
-                font-family: sans-serif;
-            ">
-                <div style="
-                    font-size: 18px;
-                    font-weight: 700;
-                    margin-bottom: 24px;
-                ">
-                    Sentra Enforcement
-                </div>
+    <div class="inspect-block">
+        <div class="inspect-label">Action Attempted</div>
+        <div class="inspect-value">{html.escape(safe_text(r.get("proposed_action", "")))}</div>
+    </div>
 
-                <div style="margin-bottom: 20px;">
-                    <div style="font-size: 13px; font-weight: 700; color: rgba(255,255,255,.72); margin-bottom: 8px;">
-                        Action Attempted
-                    </div>
-                    <div style="font-size: 15px; line-height: 1.6; color: #f0f0f4;">
-                        {html.escape(action_attempted)}
-                    </div>
-                </div>
+    <div class="inspect-block">
+        <div class="inspect-label">Policy Triggered</div>
+        <div class="inspect-value">{html.escape(safe_text(r.get("detail_title", "")))}</div>
+    </div>
 
-                <div style="margin-bottom: 20px;">
-                    <div style="font-size: 13px; font-weight: 700; color: rgba(255,255,255,.72); margin-bottom: 8px;">
-                        Policy Enforcement
-                    </div>
-                    <div style="font-size: 15px; line-height: 1.6; color: #f0f0f4;">
-                        {html.escape(policy_name)}<br>
-                        {html.escape(policy_reason)}
-                    </div>
-                </div>
+    <div class="inspect-block">
+        <div class="inspect-label">Risk Delta</div>
+        <div class="inspect-value">{html.escape(safe_text(r.get("risk", "")))}</div>
+    </div>
 
-                <div style="margin-bottom: 20px;">
-                    <div style="font-size: 13px; font-weight: 700; color: rgba(255,255,255,.72); margin-bottom: 8px;">
-                        Risk Delta
-                    </div>
-                    <div style="font-size: 15px; line-height: 1.6; color: #f0f0f4;">
-                        {html.escape(risk_delta)}
-                    </div>
-                </div>
+    <div class="inspect-block">
+        <div class="inspect-label">Runtime Decision</div>
+        <div class="inspect-value">{html.escape(decision_text)}</div>
+    </div>
 
-                <div style="margin-bottom: 20px;">
-                    <div style="font-size: 13px; font-weight: 700; color: rgba(255,255,255,.72); margin-bottom: 8px;">
-                        Sentra Decision
-                    </div>
-                    <div style="font-size: 15px; line-height: 1.6; color: #f0f0f4;">
-                        {html.escape(sentra_decision)}
-                    </div>
-                </div>
+    <div class="inspect-block">
+        <div class="inspect-label">Real-Time Enforcement Timeline</div>
+        <ul class="trace-list">
+            {trace_items}
+        </ul>
+    </div>
 
-                <div style="margin-bottom: 20px;">
-                    <div style="font-size: 13px; font-weight: 700; color: rgba(255,255,255,.72); margin-bottom: 8px;">
-                        Real-Time Enforcement Timeline
-                    </div>
-                    <ul style="margin: 0; padding-left: 18px;">
-                        {''.join(f'<li style="color:#f0f0f4; font-size:14px; line-height:1.7; margin-bottom:8px;">{html.escape(step)}</li>' for step in trace)}
-                    </ul>
-                </div>
-
-                <div style="margin-bottom: 0;">
-                    <div style="font-size: 13px; font-weight: 700; color: rgba(255,255,255,.72); margin-bottom: 8px;">
-                        System Response
-                    </div>
-                    <div style="font-size: 15px; line-height: 1.6; color: #f0f0f4;">
-                        {html.escape(system_response)}
-                    </div>
-                </div>
-            </div>
-            """
-        )
+    <div class="inspect-block">
+        <div class="inspect-label">System Response</div>
+        <div class="inspect-value">{html.escape(system_response)}</div>
+    </div>
+</div>
+"""
+        st.html(inspect_html)
