@@ -12,4 +12,4 @@ __pycache__/
 supervisor/runtime_log.json
 
 # Mac OS files
-.DS_Store
+.DS_Storesupervisor/runtime_log.json
