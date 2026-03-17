@@ -1,226 +1,264 @@
 # Sentra
 
-Sentra is a prototype runtime governance layer for AI agents.
+Sentra is a Python prototype for runtime supervision of AI agent actions.
 
-It introduces a controlled execution interface between an agent and external systems, allowing actions to be evaluated, risk-scored, and enforced before they are executed.
+It provides a control layer that evaluates proposed agent actions before execution, applies policy rules, assigns risk scores, and determines whether those actions should proceed.
 
-The agent proposes actions.  
-Sentra decides whether they execute.
+Rather than giving agents unrestricted access to tools or external systems, Sentra is designed around a controlled execution path.
+
+The agent proposes actions. Sentra evaluates whether they should execute.
 
 ---
 
-## Core Concept
+## Overview
 
-Most AI safety focuses on model outputs.
+As AI agents gain the ability to interact with tools, APIs, files, and internal systems, the main risk is no longer only what the model generates. The main risk is what the system allows the agent to do.
 
-Sentra focuses on execution authority.
+Sentra explores this problem at the execution layer.
 
-Risk in agent systems does not come from what the model generates — it comes from what the system allows the agent to do.
+The prototype demonstrates how agent actions can be routed through a runtime supervision layer that:
+
+- evaluates actions against policy rules
+- assigns dynamic risk scores
+- blocks or halts unsafe actions
+- logs execution decisions for monitoring and review
 
 ---
 
 ## What Sentra Does
 
-Sentra enforces a governed execution layer where:
+Sentra provides a supervised execution layer for agent workflows.
 
-- all agent actions are routed through a control interface  
-- actions are evaluated against policy rules  
-- dynamic risk scores are assigned  
-- execution is allowed, blocked, or halted  
+For each proposed action, the system can:
 
-This creates a controlled boundary between AI agents and external tools.
+- inspect the action metadata
+- evaluate applicable policy rules
+- calculate a risk score
+- decide whether to allow, block, or halt execution
+- record the decision in a structured runtime log
+
+This makes it possible to test how runtime controls can reduce unsafe agent behavior in multi-step workflows.
 
 ---
 
-## Design Constraint
+## Important Scope Constraint
 
-Sentra does not intercept arbitrary code execution.
+Sentra does not claim to control arbitrary agent behavior at the operating-system or model level.
 
-It requires that all tool access is routed through a controlled interface.
+It works when agent actions are routed through the Sentra control layer.
 
-If an agent can bypass this interface, governance is already broken.
+In other words, Sentra governs actions that pass through its supervised execution path. If an agent can bypass that path, those actions are outside Sentra’s control.
 
 ---
 
 ## Project Goal
 
-This project explores runtime governance for autonomous AI agents.
+This project explores runtime governance for AI agents.
 
-The prototype demonstrates how a control layer can:
+The prototype is designed to show that a control layer can sit within an agent workflow and make execution decisions before risky actions reach external systems.
 
-- enforce a single execution pathway for agent actions  
-- apply policy rules in real time  
-- calculate cumulative risk scores  
-- stop unsafe behavior before execution  
+Specifically, Sentra demonstrates how to:
+
+- route agent actions through a single supervision point
+- apply policy rules in real time
+- score execution risk dynamically
+- stop unsafe actions before they execute
+- monitor behavior across an entire workflow
 
 ---
 
 ## System Architecture
 
-Execution pipeline:
+Execution flow:
 
-AI Agent  
-↓  
-Sentra Execution Interface  
-↓  
-Policy Engine (rules)  
-↓  
-Risk Engine (scoring)  
-↓  
-Execution Decision (allow / block / halt)  
-↓  
-Tool Environment  
-↓  
-Monitoring Dashboard  
+AI Agent
+↓
+Sentra Supervision Layer
+↓
+Policy Rules
+↓
+Risk Scoring
+↓
+Execution Decision
+↓
+Tool or External System
+↓
+Monitoring Dashboard
 
-The agent generates actions as part of a workflow.  
-All actions must pass through Sentra before reaching external systems.
-
----
-
-## Key Capabilities
-
-### 1. Controlled Action Routing
-Agents cannot directly call tools.
-
-All actions must be submitted through Sentra:
-
-sentra.execute(action)
+In this design, the agent does not execute actions directly. Instead, actions are submitted to the Sentra supervision layer for evaluation first.
 
 ---
 
-### 2. Policy Enforcement
-Rules define allowed behavior across:
+## Core Capabilities
 
-- data access boundaries  
-- external communication  
-- financial operations  
+### 1. Runtime Action Evaluation
 
----
+Sentra inspects each proposed action before execution.
 
-### 3. Risk Scoring
-Each action contributes to a cumulative risk profile.
+This includes fields such as:
 
-Signals include:
+- agent identity
+- action type
+- target
+- data classification
+- destination type
 
-- action type  
-- data sensitivity  
-- destination type  
-- behavioral patterns over time  
+### 2. Policy Rule Enforcement
 
----
+Sentra applies predefined rules to identify unsafe or restricted behaviors.
+
+These rules can be used to detect patterns such as:
+
+- unauthorized data access
+- high-risk external calls
+- sensitive actions involving restricted data
+- risky combinations of action type and destination
+
+### 3. Dynamic Risk Scoring
+
+Each action is assigned a risk score based on its characteristics and context.
+
+This allows the system to distinguish between lower-risk and higher-risk actions during execution.
 
 ### 4. Execution Control
-Sentra can:
 
-- allow execution  
-- block individual actions  
-- halt agent execution when risk thresholds are exceeded  
+Based on rule evaluation and risk score, Sentra can:
+
+- allow execution
+- block a specific action
+- halt execution when a defined threshold is exceeded
+
+### 5. Structured Logging and Monitoring
+
+Sentra records runtime decisions in a structured log for downstream inspection and dashboard monitoring.
+
+This provides visibility into:
+
+- proposed actions
+- assigned risk scores
+- rule triggers
+- execution outcomes
 
 ---
 
-### 5. Runtime Monitoring
-All actions and decisions are logged.
+## Example Agent Workflow
 
-This enables:
+The prototype simulates a multi-step public-service style workflow:
 
-- auditability  
-- behavioral analysis  
-- detection of anomalous sequences  
+- Intake Agent receives applicant data
+- Eligibility Agent evaluates conditions
+- Disbursement Agent proposes financial actions
 
----
+An example proposed action might look like:
 
-## Agent Workflow
-
-The prototype simulates a multi-step decision pipeline:
-
-- Intake Agent receives input data  
-- Eligibility Agent evaluates conditions  
-- Disbursement Agent proposes financial actions  
-
-Example action:
-
-{
-  "agent": "disbursement_agent",
-  "action": "transfer_funds",
-  "amount": 5000
+```python
+action = {
+    "agent_id": "disbursement_agent",
+    "action_type": "transfer_funds",
+    "target": "external_bank_api",
+    "data_classification": "restricted",
+    "destination_type": "external"
 }
+```
 
-Each action is routed through Sentra before execution.
-
----
-
-## Threat Model
-
-Sentra focuses on detecting:
-
-- excessive or abnormal financial transfers  
-- unauthorized data access  
-- data exfiltration attempts  
-- cross-boundary operations  
-- unsafe multi-step action sequences  
-
-The system evaluates both individual actions and cumulative behavior over time.
+Sentra evaluates the action before execution and determines whether it should proceed.
 
 ---
 
-## Example Failure Mode
+## Threat Model Focus
 
-An agent:
+Sentra is designed to detect and control high-risk behaviors such as:
 
-1. reads internal data  
-2. processes it  
-3. sends it externally  
+- unauthorized access to sensitive data
+- external transmission of restricted information
+- abnormal or high-risk financial actions
+- unsafe system actions
+- risky multi-step action sequences
 
-Each step may appear valid.
+The emphasis is not only on individual actions, but also on how risky behavior can emerge during a workflow.
 
-Together, they represent data exfiltration.
+---
 
-Sentra evaluates both individual actions and cumulative behavior, and can halt execution before the final step.
+## Example Failure Pattern
+
+A sequence like the following may appear harmless when viewed step by step:
+
+1. read internal data
+2. process or transform that data
+3. send the result to an external destination
+
+Individually, each action may appear acceptable.
+Taken together, the sequence may represent exfiltration or policy breach.
+
+Sentra is intended to support evaluation at the point of execution so that unsafe actions can be blocked before completion.
 
 ---
 
 ## Repository Structure
 
+```text
 agent/
-  intake_agent.py  
-  eligibility_agent.py  
-  disbursement_agent.py  
-  orchestrator.py  
-  tools.py  
+  intake_agent.py
+  eligibility_agent.py
+  disbursement_agent.py
+  orchestrator.py
+  tools.py
 
 supervisor/
-  main.py  
-  rules.py  
-  risk.py  
-  storage.py  
+  main.py
+  rules.py
+  risk.py
+  storage.py
 
 dashboard/
-  app.py  
+  app.py
 
 docs/
-  architecture.md  
-  threat_model.md  
+  architecture.md
+  threat_model.md
+```
 
 ---
 
 ## Monitoring
 
-All agent actions and runtime decisions are logged and visualized.
+Runtime decisions are logged and surfaced through a dashboard.
 
-The dashboard provides visibility into:
+The dashboard is intended to provide visibility into:
 
-- agent behavior  
-- risk scores  
-- rule evaluations  
-- execution outcomes  
+- agent behavior
+- risk scores
+- policy rule triggers
+- blocked or halted actions
+- execution history across workflows
 
 ---
 
-## Prototype Scope
+## Current Scope
 
-This project demonstrates the feasibility of runtime governance at the execution layer.
+Sentra is an early prototype.
 
-It is not a production system.
+It is intended to demonstrate the feasibility of runtime supervision for AI agent workflows, not to serve as a complete production governance platform.
 
-It is a proof of concept showing that agent behavior can be constrained by controlling execution, not just generation.
+The project currently focuses on:
+
+- supervised execution of agent actions
+- policy-based evaluation
+- risk scoring
+- blocking and halting decisions
+- structured runtime monitoring
+
+---
+
+## Design Principle
+
+Sentra is based on a simple principle:
+
+Do not rely only on what an agent is asked to do.
+Control what the agent is allowed to execute.
+
+---
+
+## Status
+
+Early Python prototype focused on runtime supervision, execution control, and monitoring for simulated agent workflows.
