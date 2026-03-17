@@ -1,5 +1,6 @@
 # Sentra
 
+<<<<<<< HEAD
 Sentra is a Python prototype for runtime supervision of AI agent actions.
 
 It provides a control layer that evaluates proposed agent actions before execution, applies policy rules, assigns risk scores, and determines whether those actions should proceed.
@@ -262,3 +263,110 @@ Control what the agent is allowed to execute.
 ## Status
 
 Early Python prototype focused on runtime supervision, execution control, and monitoring for simulated agent workflows.
+=======
+AI agents shouldn’t have unrestricted execution.
+
+Sentra is a runtime control layer that sits between agents and the tools they use.
+
+Every action is intercepted before it executes.
+
+Sentra decides:
+
+* allow
+* block
+* halt
+
+---
+
+## The problem
+
+Agents don’t just generate text.
+
+They:
+
+* call APIs
+* move data
+* modify systems
+
+Most systems evaluate outputs.
+
+Very few control what actually gets executed.
+
+---
+
+## What Sentra does
+
+Sentra turns every action into a decision.
+
+* intercepts tool calls
+* applies policy rules
+* assigns risk scores
+* tracks cumulative behavior
+* stops execution when the system becomes unsafe
+
+---
+
+## Example
+
+READ_FILE → allowed
+SEND_DATA (sensitive → external) → blocked (+80)
+DELETE_FILE → blocked (+60)
+NEXT ACTION → halted
+
+The last action isn’t dangerous.
+
+The system is.
+
+---
+
+## Model
+
+Sentra introduces two layers of enforcement:
+
+Action-level
+
+* Allowed
+* Blocked
+
+System-level
+
+* Halted when cumulative risk exceeds threshold
+
+---
+
+## Architecture
+
+Agent → Sentra → Policy → Risk → Decision → Execution
+
+Sentra sits directly in the execution path.
+
+---
+
+## Why this exists
+
+Agent failures are rarely single events.
+
+They emerge over sequences of actions.
+
+Sentra models that with cumulative risk and stops execution before escalation.
+
+---
+
+## Quickstart
+
+git clone https://github.com/YOUR_USERNAME/sentra.git
+cd sentra
+
+pip install -r requirements.txt
+
+uvicorn supervisor.main:app --reload
+streamlit run dashboard/app.py
+
+---
+
+## Status
+
+Prototype.
+
+Designed to explore execution control for AI systems.
+>>>>>>> f3b5f04 (Update README)
