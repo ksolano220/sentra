@@ -1,14 +1,13 @@
-# IBM Lab Dashboard
+# Sentra Dashboard
 
 import json
 import html
 from pathlib import Path
 from datetime import datetime
-from textwrap import dedent
 
 import streamlit as st
 
-st.set_page_config(page_title="IBM Lab Dashboard", layout="wide")
+st.set_page_config(page_title="Sentra Dashboard", layout="wide")
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 LOG_FILE = BASE_DIR / "supervisor" / "runtime_log.json"
@@ -47,14 +46,14 @@ def format_timestamp(value):
 def normalize_state(row):
     raw = row.get("agent_state", row.get("decision", ""))
     mapping = {
-        "ALLOW": "Running",
-        "BLOCK": "Prevented",
-        "REQUIRE_HUMAN_REVIEW": "Cancelled",
-        "Running": "Running",
-        "Prevented": "Prevented",
-        "Cancelled": "Cancelled",
+        "ALLOW": "Allowed",
+        "BLOCK": "Blocked",
+        "REQUIRE_HUMAN_REVIEW": "Halted",
+        "Allowed": "Allowed",
+        "Blocked": "Blocked",
+        "Halted": "Halted",
     }
-    return mapping.get(raw, "Running")
+    return mapping.get(raw, "Allowed")
 
 
 def safe_text(value):
@@ -186,17 +185,17 @@ st.markdown(
         display: inline-block;
     }
 
-    .running {
+    .allowed {
         background: rgba(22,110,60,.28);
         color: #35e37a;
     }
 
-    .prevented {
+    .blocked {
         background: rgba(176,131,12,.25);
         color: #f2c84b;
     }
 
-    .cancelled {
+    .halted {
         background: rgba(134,33,33,.28);
         color: #ff6a57;
     }
@@ -283,11 +282,15 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-st.markdown('<div class="title">IBM Lab Dashboard</div>', unsafe_allow_html=True)
+st.markdown('<div class="title">Sentra Dashboard</div>', unsafe_allow_html=True)
 
 events = len(rows)
-blocked = sum(1 for r in rows if r["agent_state"] in ["Prevented", "Cancelled"])
-risk_total = sum(int(str(r["risk"]).replace("+", "").replace("NULL", "0")) for r in rows if str(r["risk"]).replace("+", "").isdigit())
+blocked = sum(1 for r in rows if r["agent_state"] in ["Blocked", "Halted"])
+risk_total = sum(
+    int(str(r["risk"]).replace("+", "").replace("NULL", "0"))
+    for r in rows
+    if str(r["risk"]).replace("+", "").isdigit()
+)
 
 m1, m2, m3 = st.columns(3)
 
@@ -336,10 +339,10 @@ with table_col:
         c5.markdown(f'<div class="cell">{html.escape(row["cum"])}</div>', unsafe_allow_html=True)
 
         pill_class = {
-            "Running": "running",
-            "Prevented": "prevented",
-            "Cancelled": "cancelled",
-        }.get(row["agent_state"], "running")
+            "Allowed": "allowed",
+            "Blocked": "blocked",
+            "Halted": "halted",
+        }.get(row["agent_state"], "allowed")
 
         c6.markdown(
             f'<span class="pill {pill_class}">{html.escape(row["agent_state"])}</span>',
@@ -362,15 +365,15 @@ with inspect_col:
         r = st.session_state.selected_row
 
         decision_text = {
-            "Prevented": "Blocked in real time",
-            "Cancelled": "Escalated and halted",
-            "Running": "Allowed to continue",
+            "Blocked": "Blocked in real time",
+            "Halted": "Execution halted due to risk threshold",
+            "Allowed": "Allowed to continue",
         }.get(r.get("agent_state", ""), safe_text(r.get("agent_state", "")))
 
         system_response = {
-            "Prevented": "Tool call rejected and event logged",
-            "Cancelled": "Execution halted pending review",
-            "Running": "Execution allowed and event logged",
+            "Blocked": "Tool call rejected and event logged",
+            "Halted": "Execution halted and event logged",
+            "Allowed": "Execution allowed and event logged",
         }.get(r.get("agent_state", ""), "NULL")
 
         trace_items = "".join(
