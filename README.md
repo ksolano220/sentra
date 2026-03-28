@@ -2,127 +2,48 @@
 
 **Runtime control layer for AI agents.**
 
-Sentra intercepts agent actions before execution, evaluates risk in real time, and decides whether those actions are allowed, blocked, or halted.
-
-The agent proposes actions.  
-Sentra enforces control.
+Sentra sits between agent decision-making and execution. It evaluates proposed actions in real time, applies policy rules, assigns risk, and determines whether the action is allowed, blocked, or requires review.
 
 ---
 
 ## Why Sentra
 
-Most AI safety focuses on model behavior.
+Autonomous agents can take actions that impact real systems:
 
-Sentra focuses on **execution control**.
+* sending external communications
+* modifying data
+* triggering financial or operational workflows
 
-The real risk isn’t just bad outputs — it’s what agents are allowed to *do*:
-- calling APIs
-- modifying systems
-- accessing sensitive data
-- escalating privileges
-
-Sentra sits in the execution path and enforces boundaries at runtime.
+Sentra ensures those actions are **evaluated before execution**, not after.
 
 ---
 
-## Core Capabilities
+## What Sentra Does
 
-- **Action Interception**  
-  All agent actions are routed through a control layer before execution
+* Intercepts proposed agent actions
+* Applies deterministic policy rules
+* Assigns dynamic risk scores
+* Returns a runtime decision:
 
-- **Policy Enforcement**  
-  Rules detect high-risk behaviors:
-  - data exfiltration
-  - destructive actions
-  - privilege escalation
-
-- **Dynamic Risk Scoring**  
-  Each action contributes to cumulative system risk
-
-- **Execution Control**  
-  Sentra can:
-  - allow actions
-  - block actions
-  - halt the system entirely
-
-- **Hard Kill Switch**  
-  Once risk exceeds a threshold, the system enters a halted state and ignores further actions
-
-- **Audit Logging**  
-  Every decision is logged with:
-  - risk deltas
-  - triggered policies
-  - execution traces
+  * `ALLOW`
+  * `BLOCK`
+  * `REQUIRE_HUMAN_REVIEW`
+* Logs every event for auditability
+* Provides a real-time dashboard for monitoring
 
 ---
 
-## Example
+## How It Works
 
-```json
-{
-  "agent_id": "disbursement_agent",
-  "action_type": "SEND_DATA",
-  "target": "external_api",
-  "data_classification": "sensitive",
-  "destination_type": "external"
-}
+```
+Agent → Proposed Action → Sentra → Decision → Execution (or Block)
 ```
 
-Sentra response:
-
-```json
-{
-  "decision": "BLOCK",
-  "risk_delta": 80,
-  "threat_type": "DATA_EXFILTRATION"
-}
-```
+Sentra does not execute actions. It evaluates them.
 
 ---
 
-## Architecture
-
-```
-AI Agent
-   ↓
-Sentra Runtime Layer
-   ↓
-Policy Engine
-   ↓
-Risk Engine
-   ↓
-Execution Decision
-   ↓
-Tool / API
-```
-
-Sentra is not part of the agent.  
-It is the layer that governs what the agent is allowed to execute.
-
----
-
-## System Behavior
-
-Sentra enforces two critical guarantees:
-
-1. All actions are evaluated before execution  
-2. Once halted, no further actions are processed  
-
-This prevents silent escalation and uncontrolled execution drift.
-
----
-
-## Project Structure
-
-```
-agent/        # simulated agents and workflows
-supervisor/   # runtime control layer (FastAPI)
-dashboard/    # monitoring + audit interface (Streamlit)
-```
-
----
-
-## Running the Project
+## Quick Start
 
 ### 1. Install dependencies
 
@@ -130,56 +51,153 @@ dashboard/    # monitoring + audit interface (Streamlit)
 pip install -r requirements.txt
 ```
 
-### 2. Start the supervisor
+### 2. Run Sentra API
 
 ```bash
 uvicorn supervisor.main:app --reload
 ```
 
-### 3. Start the dashboard
+Sentra will be available at:
 
-```bash
-streamlit run dashboard/app.py
+```
+http://127.0.0.1:8000
 ```
 
 ---
 
-## Test Scenario
+### 3. Run Dashboard
 
-Run a sequence of actions:
+```bash
+python -m streamlit run dashboard/app.py
+```
 
-1. READ_FILE → allowed  
-2. SEND_DATA (sensitive → external) → blocked (+80)  
-3. DELETE_FILE → blocked (+60)  
-4. Any further action → ignored (system halted)
+Open:
+
+```
+http://localhost:8501
+```
 
 ---
 
-## Design Principle
+## Integration (Client Side)
 
-Sentra assumes:
+Clients send proposed actions to Sentra before execution.
 
-Agents cannot be trusted with direct execution authority.
+### Example request
 
-Control must exist outside the agent, at the execution boundary.
+```python
+import requests
+
+payload = {
+    "claim": {
+        "claim_id": "example_123",
+        "documents": {
+            "proof_of_termination": None
+        },
+        "currently_employed_elsewhere": "No"
+    },
+    "proposed_tool_call": {
+        "tool_name": "send_email_notification",
+        "arguments": {
+            "message_type": "APPROVAL"
+        }
+    }
+}
+
+response = requests.post(
+    "http://127.0.0.1:8000/evaluate",
+    json=payload
+)
+
+result = response.json()
+```
+
+### Decision handling
+
+```python
+if result["result"]["decision"] == "ALLOW":
+    execute_tool()
+else:
+    block_action()
+```
+
+---
+
+## Dashboard
+
+The Sentra dashboard provides:
+
+* real-time runtime events
+* action attempts and decisions
+* triggered policies
+* risk scores
+* enforcement timeline
+
+Each Sentra instance maintains its own logs and dashboard.
+
+---
+
+## Runtime Log
+
+Events are stored locally:
+
+```
+supervisor/runtime_log.json
+```
+
+Each event includes:
+
+* proposed action
+* decision
+* risk score
+* triggered rule
+* reason
+* enforcement trace
+
+---
+
+## Example Use Cases
+
+Sentra is domain-agnostic and can be used for:
+
+* preventing unsafe external communications
+* blocking data exfiltration
+* enforcing workflow constraints
+* validating required verification before execution
+* controlling autonomous financial or operational actions
+
+---
+
+## Architecture
+
+Sentra is designed as a standalone service:
+
+* API: runtime evaluation
+* Rule engine: policy enforcement
+* Risk engine: scoring and thresholds
+* Storage: structured audit logs
+* Dashboard: monitoring and explainability
+
+Clients integrate via a simple API call.
+
+---
+
+## Design Principles
+
+* **Execution must be controlled, not trusted**
+* **Policies must be explicit and enforceable**
+* **Every decision must be explainable**
+* **Logs must be structured and auditable**
+* **System must remain domain-agnostic**
 
 ---
 
 ## Status
 
-Prototype focused on runtime governance for AI agents.
-
----
-
-## Next Steps
-
-- External tool integration layer  
-- Policy configuration engine  
-- Multi-agent coordination tracking  
-- Persistent system state + recovery flows  
+Sentra is an early-stage prototype focused on demonstrating runtime control for autonomous agents.
 
 ---
 
 ## License
 
-MIT
+MIT License
