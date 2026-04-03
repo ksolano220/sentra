@@ -10,6 +10,7 @@ st.set_page_config(page_title="Sentra Dashboard", layout="wide")
 BASE_DIR = Path(__file__).resolve().parent.parent
 LOG_FILE = BASE_DIR / "supervisor" / "runtime_log.json"
 REFRESH_SECONDS = 2
+RISK_THRESHOLD = 100
 
 
 def parse_dt(value):
@@ -49,29 +50,31 @@ def safe_text(value):
     return text if text else "—"
 
 
-def parse_risk_int(value):
-    if value is None:
-        return 0
-    text = str(value).strip().replace("+", "")
-    return int(text) if text.isdigit() else 0
-
-
-def parse_cum(value):
+def parse_int(value, default=0):
     try:
-        return int(str(value).split("/")[0])
+        if value is None:
+            return default
+        if isinstance(value, str) and "/" in value:
+            return int(value.split("/")[0].strip())
+        return int(float(value))
     except Exception:
-        return 0
+        return default
+
+
+def load_json(path, default):
+    if path.exists():
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                return data
+        except Exception:
+            return default
+    return default
 
 
 def load_logs():
-    if LOG_FILE.exists():
-        try:
-            with open(LOG_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                return data if isinstance(data, list) else []
-        except (json.JSONDecodeError, FileNotFoundError):
-            return []
-    return []
+    data = load_json(LOG_FILE, [])
+    return data if isinstance(data, list) else []
 
 
 def build_event_trace(row):
@@ -87,7 +90,7 @@ def build_event_trace(row):
         if cleaned:
             return cleaned
 
-    detail_body = str(row.get("detail_body", row.get("reason", ""))).strip()
+    detail_body = str(row.get("reason", "")).strip()
     if detail_body:
         cleaned = [line.strip() for line in detail_body.splitlines() if line.strip()]
         if cleaned:
@@ -96,240 +99,260 @@ def build_event_trace(row):
     return ["—"]
 
 
-def normalize_decision(row):
-    raw = safe_text(row.get("decision", row.get("agent_state", ""))).upper()
-    policy = safe_text(row.get("policy_triggered", row.get("detail_title", ""))).upper()
-
-    if raw in ["ALLOW", "ALLOWED"]:
-        return "Allowed"
-
-    if raw in ["BLOCK", "BLOCKED"]:
-        return "Blocked"
-
-    if raw in ["CONTAINED", "SHUT_DOWN", "SHUTDOWN", "AGENT SHUT DOWN"]:
-        return "Agent Shut Down"
-
-    if policy in [
-        "RISK_THRESHOLD_EXCEEDED",
-        "SYSTEM_CONTAINMENT_ACTIVE",
-        "SHUTDOWN_THRESHOLD_REACHED",
-        "AGENT_ALREADY_SHUT_DOWN",
-    ]:
-        return "Agent Shut Down"
-
-    if raw in ["REQUIRE HUMAN REVIEW", "REVIEW"]:
-        return "Require Human Review"
-
-    return safe_text(row.get("decision", "Allowed"))
-
-
-def infer_message_type(row):
-    notification_type = row.get("notification_type")
-    if notification_type:
-        return str(notification_type).upper()
-
-    tool_call = row.get("proposed_tool_call", {})
-    arguments = tool_call.get("arguments", {}) if isinstance(tool_call, dict) else {}
-    message_type = arguments.get("message_type")
-    if message_type:
-        return str(message_type).upper()
-
-    rule = safe_text(row.get("policy_triggered", row.get("detail_title", "")))
-    reason = safe_text(row.get("reason", row.get("detail_body", ""))).lower()
-
-    if "APPROVAL" in rule or "approval" in reason:
-        return "APPROVAL"
-    if "REJECTION" in rule or "rejection" in reason:
-        return "REJECTION"
-    if "REVIEW" in rule or "review" in reason:
-        return "REVIEW"
-
-    return None
-
-
 def normalize_action(row):
-    if row.get("action_label"):
-        return safe_text(row.get("action_label"))
+    action_label = row.get("action_label")
+    if action_label:
+        return safe_text(action_label)
 
     action_type = row.get("action_type")
     if action_type:
         return str(action_type).replace("_", " ").title()
 
-    base_action = safe_text(row.get("proposed_action", row.get("action", "")))
-    tool_call = row.get("proposed_tool_call", {})
-    tool_name = tool_call.get("tool_name") if isinstance(tool_call, dict) else None
-
-    action_name = tool_name if tool_name else base_action
-
-    if action_name == "send_email_notification":
-        message_type = infer_message_type(row)
-        if message_type:
-            return f"send_email_notification ({message_type})"
-        return "send_email_notification"
-
-    return action_name if action_name else base_action
+    return "—"
 
 
-def get_action_label(row):
-    if row.get("action_label"):
-        return safe_text(row.get("action_label"))
-
-    action = normalize_action(row)
-
-    if action == "send_email_notification (APPROVAL)":
-        return "Approval Email"
-    if action == "send_email_notification (REJECTION)":
-        return "Rejection Email"
-    if action == "send_email_notification (REVIEW)":
-        return "Review Email"
-    if action == "send_email_notification":
-        return "Email Notification"
-    if action == "read_file":
-        return "File Read"
-    if action == "file_write":
-        return "File Write"
-    if action == "delete_file":
-        return "Delete File"
-    if action == "api_call":
-        return "API Call"
-    if action == "database_query":
-        return "Database Query"
-
-    return str(action).replace("_", " ").title()
+def raw_decision_value(row):
+    return safe_text(row.get("decision")).upper()
 
 
-def normalize_threat(row):
-    raw = safe_text(row.get("threat_type", "")).upper()
-    policy = safe_text(row.get("policy_triggered", row.get("detail_title", ""))).upper()
-    decision = normalize_decision(row)
+def raw_policy_value(row):
+    return safe_text(row.get("policy_triggered")).upper()
+
+
+def normalize_decision(row):
+    raw = raw_decision_value(row)
+
+    if raw in {"ALLOW", "ALLOWED"}:
+        return "Allowed"
+
+    if raw in {"BLOCK", "BLOCKED"}:
+        return "Blocked"
+
+    if raw in {"AGENT SHUT DOWN", "SHUT_DOWN", "SHUTDOWN", "CONTAINED"}:
+        return "Agent Shut Down"
+
+    if raw in {"REQUIRE HUMAN REVIEW", "REVIEW"}:
+        return "Require Human Review"
+
+    return safe_text(row.get("decision", "—"))
+
+
+def normalize_threat(row, normalized_decision=None):
+    raw = safe_text(row.get("threat_type")).upper()
+    policy = raw_policy_value(row)
+    decision = normalized_decision or normalize_decision(row)
 
     threat_map = {
-        "DATA_EXFILTRATION": "Data Exfiltration",
         "DATA EXFILTRATION": "Data Exfiltration",
-        "DESTRUCTIVE_ACTION": "Destructive Action",
-        "DESTRUCTIVE ACTION": "Destructive Action",
-        "UNKNOWN_BEHAVIOR": "Unknown Behavior",
-        "UNKNOWN BEHAVIOR": "Unknown Behavior",
-        "LOW_RISK_ACTIVITY": "Low Risk Activity",
-        "LOW RISK ACTIVITY": "Low Risk Activity",
-        "SENSITIVE_ACCESS": "Sensitive Access",
-        "SENSITIVE ACCESS": "Sensitive Access",
-        "UNAPPROVED_DESTINATION": "Unapproved Destination",
-        "UNAPPROVED DESTINATION": "Unapproved Destination",
-        "BEHAVIORAL_ANOMALY": "Behavioral Anomaly",
-        "BEHAVIORAL ANOMALY": "Behavioral Anomaly",
-        "CONTAINMENT": "Agent Shut Down",
-        "AUTHORITY DRIFT": "Authority Drift",
+        "DATA_EXFILTRATION": "Data Exfiltration",
         "PRIVILEGE ESCALATION": "Privilege Escalation",
-        "POLICY VIOLATION": "Policy Violation",
+        "PRIVILEGE_ESCALATION": "Privilege Escalation",
+        "UNKNOWN BEHAVIOR": "Unknown Behavior",
+        "UNKNOWN_BEHAVIOR": "Unknown Behavior",
+        "DESTRUCTIVE ACTION": "Destructive Action",
+        "DESTRUCTIVE_ACTION": "Destructive Action",
         "FINANCIAL OVERREACH": "Financial Overreach",
+        "AUTHORITY DRIFT": "Authority Drift",
+        "POLICY VIOLATION": "Policy Violation",
+        "AGENT SHUTDOWN": "Agent Shutdown",
+        "AGENT_SHUTDOWN": "Agent Shutdown",
+        "RISK THRESHOLD EXCEEDED": "Risk Threshold Exceeded",
     }
 
     if raw in threat_map:
         return threat_map[raw]
 
-    if policy in ["BLOCK_SENSITIVE_EXTERNAL_EXPORT", "BLOCK_SENSITIVE_EXTERNAL_SERVICE_ACCESS"]:
-        return "Data Exfiltration"
-
-    if policy in ["BLOCK_PERMISSION_CHANGE"]:
+    if policy == "BLOCK_PERMISSION_CHANGE":
         return "Privilege Escalation"
 
-    if policy in ["REVIEW_DELETE_RECORD", "REVIEW_SENSITIVE_RECORD_MODIFICATION"]:
-        return "Destructive Action"
-
-    if policy in ["SHUTDOWN_THRESHOLD_REACHED", "AGENT_ALREADY_SHUT_DOWN"]:
-        return "Agent Shut Down"
-
-    if policy.startswith("BLOCK_"):
-        return "Policy Violation"
-
-    if policy.startswith("REVIEW_"):
-        return "Financial Overreach" if "TRANSACTION" in policy else "Requires Review"
-
     if decision == "Agent Shut Down":
-        return "Agent Shut Down"
+        return "Agent Shutdown"
 
-    return "—"
+    return "None"
+
+
+def compute_agent_rows(raw_rows):
+    grouped = {}
+
+    for row in raw_rows:
+        agent_id = safe_text(row.get("agent_id"))
+        if agent_id == "—":
+            continue
+        grouped.setdefault(agent_id, []).append(row)
+
+    processed = []
+
+    for agent_id, agent_rows in grouped.items():
+        ordered = sorted(agent_rows, key=lambda x: parse_dt(x.get("timestamp", "")))
+
+        blocked_attempts = 0
+        agent_status = "Active"
+        shutdown_reason = "—"
+
+        for idx, row in enumerate(ordered):
+            normalized_decision = normalize_decision(row)
+            policy_triggered = safe_text(row.get("policy_triggered"))
+            policy_upper = policy_triggered.upper()
+
+            if normalized_decision == "Blocked":
+                blocked_attempts += 1
+            elif policy_upper == "AGENT_SHUTDOWN_AFTER_REPEATED_BLOCKS":
+                blocked_attempts += 1
+
+            if normalized_decision == "Agent Shut Down":
+                agent_status = "Shut Down"
+                shutdown_reason = safe_text(row.get("reason"))
+
+            cumulative_risk = parse_int(row.get("cumulative_risk", 0), 0)
+
+            processed.append(
+                {
+                    "row_key": (
+                        f"{row.get('timestamp', '')}|{agent_id}|"
+                        f"{row.get('action_type', '')}|{idx}|{policy_triggered}"
+                    ),
+                    "timestamp_raw": row.get("timestamp", ""),
+                    "timestamp": format_timestamp(row.get("timestamp", "")),
+                    "agent_id": agent_id,
+                    "action_label": normalize_action(row),
+                    "threat_type": normalize_threat(row, normalized_decision),
+                    "risk": parse_int(row.get("risk", 0), 0),
+                    "attempted": parse_int(row.get("attempted_risk", row.get("risk", 0)), 0),
+                    "decision": normalized_decision,
+                    "policy_triggered": policy_triggered,
+                    "policy_description": safe_text(row.get("policy_description")),
+                    "reason": safe_text(row.get("reason")),
+                    "event_trace": build_event_trace(row),
+                    "cumulative_risk": cumulative_risk,
+                    "blocked_attempts": blocked_attempts,
+                    "agent_status": agent_status,
+                    "shutdown_reason": shutdown_reason,
+                    "raw": row,
+                }
+            )
+
+    processed = sorted(processed, key=lambda x: parse_dt(x["timestamp_raw"]), reverse=True)
+    return processed
+
+
+def get_latest_agent_row(agent_id, processed_rows):
+    agent_rows = [r for r in processed_rows if r["agent_id"] == agent_id]
+    if not agent_rows:
+        return None
+    return sorted(agent_rows, key=lambda x: parse_dt(x["timestamp_raw"]), reverse=True)[0]
+
+
+def get_agent_status(agent_id, processed_rows):
+    latest = get_latest_agent_row(agent_id, processed_rows)
+    if not latest:
+        return "Active"
+    return latest["agent_status"]
+
+
+def get_agent_cumulative_risk(agent_id, processed_rows):
+    latest = get_latest_agent_row(agent_id, processed_rows)
+    if not latest:
+        return 0
+    return parse_int(latest.get("cumulative_risk", 0), 0)
+
+
+def get_blocked_attempts(agent_id, processed_rows):
+    latest = get_latest_agent_row(agent_id, processed_rows)
+    if not latest:
+        return 0
+    return parse_int(latest.get("blocked_attempts", 0), 0)
+
+
+def get_shutdown_reason(agent_id, processed_rows):
+    latest = get_latest_agent_row(agent_id, processed_rows)
+    if not latest:
+        return "—"
+    return safe_text(latest.get("shutdown_reason", "—"))
 
 
 def get_why_it_matters(row):
-    policy_triggered = safe_text(
-        row.get("policy_triggered") or row.get("detail_title") or ""
-    ).upper()
-    decision = normalize_decision(row)
+    decision = row["decision"]
+    policy = safe_text(row.get("policy_triggered")).upper()
 
-    if row.get("policy_description"):
-        return safe_text(row.get("policy_description"))
+    if policy == "RISKY_SENSITIVE_EXTERNAL_EXPORT":
+        return "The agent attempted to move sensitive data outside the approved boundary."
 
-    if policy_triggered == "DATA_EXFILTRATION":
-        return "The agent attempted to move sensitive data outside the approved system boundary."
+    if policy == "RISKY_SENSITIVE_EXTERNAL_SERVICE_ACCESS":
+        return "The agent attempted to send sensitive data to an external service."
 
-    if policy_triggered == "DESTRUCTIVE_ACTION":
-        return "The agent attempted a destructive action that could alter or damage internal resources."
+    if policy == "BLOCK_PERMISSION_CHANGE":
+        return "The agent attempted a privileged action without explicit authorization."
 
-    if policy_triggered in ["RISK_THRESHOLD_EXCEEDED", "SHUTDOWN_THRESHOLD_REACHED"]:
-        return "Cumulative behavioral risk exceeded the threshold, so the agent was shut down."
+    if policy == "RISKY_UNSAFE_APPROVAL_NOTIFICATION":
+        return "The agent attempted to approve or communicate an outcome without satisfying policy prerequisites."
 
-    if policy_triggered in ["SYSTEM_CONTAINMENT_ACTIVE", "AGENT_ALREADY_SHUT_DOWN"] or decision == "Agent Shut Down":
-        return "The agent has already been shut down, so further actions are denied automatically."
+    if policy == "AGENT_SHUTDOWN_AFTER_REPEATED_BLOCKS":
+        return "The agent was automatically shut down after repeated blocked attempts."
 
-    if policy_triggered == "INTERNAL_OPERATION":
-        return "This is a normal internal system operation."
+    if policy == "AGENT_ALREADY_SHUT_DOWN":
+        return "This action was denied because the agent had already been shut down by a prior enforcement decision."
 
-    if policy_triggered == "NO_RULE_TRIGGERED":
-        return "The action remained within current policy and risk tolerance."
+    if policy == "RISK_THRESHOLD_EXCEEDED":
+        return "The action would have pushed cumulative risk above the allowed threshold, so it was blocked."
 
-    if "ALLOW" in policy_triggered:
-        return "This action matched an approved policy pattern and did not introduce meaningful system risk."
+    if decision == "Allowed":
+        return "The backend allowed the action under current policy and threshold rules."
 
-    if "BLOCK" in policy_triggered:
-        return "This action violated an enforcement rule and was blocked."
+    if decision == "Blocked":
+        return "The backend blocked the action under current policy and threshold rules."
 
-    if "REVIEW" in policy_triggered:
-        return "This action exceeded an approval or safety threshold and was routed for human review."
+    if decision == "Require Human Review":
+        return "The backend routed the action for review."
 
-    return "Sentra evaluated the action against policy and behavioral risk rules."
+    if decision == "Agent Shut Down":
+        return "The backend placed the agent into a terminal enforcement state."
+
+    return "Sentra evaluated the action against backend enforcement rules."
 
 
 def get_outcome(row):
-    policy_triggered = safe_text(
-        row.get("policy_triggered") or row.get("detail_title") or ""
-    ).upper()
-    decision = normalize_decision(row)
-    cum_value = safe_text(row.get("cum", row.get("cumulative_risk", "")))
-    system_response = safe_text(row.get("reason", row.get("detail_body", "")))
+    decision = row["decision"]
+    status = safe_text(row.get("agent_status"))
+    cumulative_risk = parse_int(row.get("cumulative_risk", 0), 0)
+    blocked_attempts = parse_int(row.get("blocked_attempts", 0), 0)
+    applied_risk = parse_int(row.get("risk", 0), 0)
 
-    if policy_triggered in ["DATA_EXFILTRATION", "BLOCK_SENSITIVE_EXTERNAL_EXPORT", "BLOCK_SENSITIVE_EXTERNAL_SERVICE_ACCESS"]:
-        return f"Action blocked. Cumulative risk is now {cum_value}."
+    if decision == "Allowed":
+        return (
+            f"Action allowed. Applied risk: {applied_risk}. "
+            f"Cumulative risk at this point: {cumulative_risk}/{RISK_THRESHOLD}."
+        )
 
-    if policy_triggered in ["DESTRUCTIVE_ACTION", "REVIEW_DELETE_RECORD", "REVIEW_SENSITIVE_RECORD_MODIFICATION"]:
-        if decision == "Require Human Review":
-            return f"Action routed to human review. Cumulative risk is now {cum_value}."
-        return f"Action blocked. Cumulative risk is now {cum_value}."
+    if decision == "Blocked":
+        return (
+            f"Action blocked. Applied risk: {applied_risk}. "
+            f"Cumulative risk at this point: {cumulative_risk}/{RISK_THRESHOLD}. "
+            f"Blocked attempts at this point: {blocked_attempts}."
+        )
 
-    if policy_triggered in ["RISK_THRESHOLD_EXCEEDED", "SHUTDOWN_THRESHOLD_REACHED"]:
-        return f"Agent shut down at {cum_value}. Future actions are denied until review."
+    if decision == "Require Human Review":
+        return (
+            f"Action routed to human review. Applied risk: {applied_risk}. "
+            f"Cumulative risk at this point: {cumulative_risk}/{RISK_THRESHOLD}."
+        )
 
-    if policy_triggered in ["SYSTEM_CONTAINMENT_ACTIVE", "AGENT_ALREADY_SHUT_DOWN"] or decision == "Agent Shut Down":
-        return f"Action denied because the agent is shut down at {cum_value}."
+    if decision == "Agent Shut Down":
+        return (
+            f"Agent entered shut down state. "
+            f"Cumulative risk at this point: {cumulative_risk}/{RISK_THRESHOLD}. "
+            f"Blocked attempts at this point: {blocked_attempts}. "
+            f"Status: {status}."
+        )
 
-    if policy_triggered == "INTERNAL_OPERATION":
-        return f"Action allowed. Cumulative risk remains {cum_value}."
+    return safe_text(row.get("reason"))
 
-    if "ALLOW" in policy_triggered:
-        return f"Action allowed. Cumulative risk is {cum_value}."
-
-    if "REVIEW" in policy_triggered or decision == "Require Human Review":
-        return f"Action routed to human review. Cumulative risk is {cum_value}."
-
-    return system_response if system_response != "—" else f"Action processed. Current decision: {decision} at {cum_value}."
-
-
-if "selected_index" not in st.session_state:
-    st.session_state.selected_index = None
 
 if "selected_row_key" not in st.session_state:
     st.session_state.selected_row_key = None
+
+if "agent_filter" not in st.session_state:
+    st.session_state.agent_filter = "All Agents"
+
 
 st.markdown(
     """
@@ -340,28 +363,47 @@ st.markdown(
     }
 
     .block-container {
-        max-width: 1750px;
-        padding-top: 3.5rem;
+        max-width: 1780px;
+        padding-top: 2.2rem;
+        padding-bottom: 2rem;
     }
 
     .title {
-        font-size: 36px;
+        font-size: 50px;
         font-weight: 700;
-        margin-bottom: 18px;
+        margin-top: 3rem;
+        margin-bottom: 20px;
+        color: #ffffff;
+    }
+
+    .metric-card {
+        background: rgba(255,255,255,0.03);
+        border: 1px solid rgba(255,255,255,0.06);
+        border-radius: 18px;
+        padding: 16px 18px;
+        min-height: 92px;
     }
 
     .metric-title {
         font-size: 13px;
-        color: #cfcfe6;
+        color: #f3f4f6;
+        margin-bottom: 6px;
     }
 
     .metric-value {
         font-size: 28px;
         font-weight: 700;
+        color: white;
     }
 
-    .table-wrap {
-        margin-top: 2.1rem;
+    .metric-sub {
+        font-size: 12px;
+        color: #d1d5db;
+        margin-top: 4px;
+    }
+
+    .section-gap {
+        margin-top: 1rem;
     }
 
     .table-header {
@@ -369,11 +411,12 @@ st.markdown(
         font-weight: 600;
         border-bottom: 1px solid rgba(255,255,255,.10);
         padding-bottom: 10px;
+        color: #f8fafc;
     }
 
     .cell {
         font-size: 14px;
-        color: #eaeaf3;
+        color: #f1f5f9;
         padding-top: 2px;
         padding-bottom: 2px;
     }
@@ -390,6 +433,7 @@ st.markdown(
         font-size: 12px;
         font-weight: 700;
         display: inline-block;
+        white-space: nowrap;
     }
 
     .allowed {
@@ -413,36 +457,44 @@ st.markdown(
     }
 
     .inspect-card {
-        background: rgba(40,40,48,.96);
+        background: #15161c;
         border-radius: 18px;
         border: 1px solid rgba(255,255,255,.06);
-        padding: 28px 24px 24px 24px;
-        margin-top: 0;
-        min-height: 520px;
+        padding: 24px 22px 22px 22px;
+        min-height: 620px;
     }
 
     .inspect-title {
         font-size: 18px;
         font-weight: 700;
         color: white;
-        margin-bottom: 24px;
+        margin-bottom: 20px;
+    }
+
+    .inspect-group-title {
+        font-size: 12px;
+        letter-spacing: .08em;
+        text-transform: uppercase;
+        color: #cbd5e1;
+        margin-top: 2px;
+        margin-bottom: 16px;
     }
 
     .inspect-block {
-        margin-bottom: 22px;
+        margin-bottom: 20px;
     }
 
     .inspect-label {
         font-size: 13px;
         font-weight: 700;
-        color: rgba(255,255,255,.72);
+        color: #e2e8f0;
         margin-bottom: 6px;
     }
 
     .inspect-value {
         font-size: 15px;
         line-height: 1.6;
-        color: #f0f0f4;
+        color: #f8fafc;
         white-space: pre-line;
         word-break: break-word;
     }
@@ -453,10 +505,36 @@ st.markdown(
     }
 
     .trace-list li {
-        color: #f0f0f4;
+        color: #f8fafc;
         font-size: 14px;
         line-height: 1.7;
         margin-bottom: 8px;
+    }
+
+    .mini-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+        margin-bottom: 20px;
+    }
+
+    .mini-card {
+        background: #1b1d24;
+        border: 1px solid rgba(255,255,255,0.05);
+        border-radius: 14px;
+        padding: 12px 14px;
+    }
+
+    .mini-label {
+        font-size: 12px;
+        color: #d1d5db;
+        margin-bottom: 4px;
+    }
+
+    .mini-value {
+        font-size: 18px;
+        font-weight: 700;
+        color: white;
     }
 
     div[data-testid="stButton"] {
@@ -474,7 +552,7 @@ st.markdown(
         border-radius: 50% !important;
         border: 1.5px solid rgba(255,255,255,0.4) !important;
         background: transparent !important;
-        color: rgba(255,255,255,0.7) !important;
+        color: rgba(255,255,255,0.8) !important;
         padding: 0 !important;
         display: flex !important;
         align-items: center !important;
@@ -487,20 +565,31 @@ st.markdown(
 
     div[data-testid="stButton"] > button:hover {
         background: rgba(255,255,255,0.08) !important;
-        border-color: rgba(255,255,255,0.8) !important;
+        border-color: rgba(255,255,255,0.9) !important;
         color: white !important;
     }
 
     div[data-testid="stButton"] > button[kind="secondary"] {
         background: transparent !important;
-        color: rgba(255,255,255,0.7) !important;
-        border: 1.5px solid rgba(255,255,255,0.4) !important;
+        color: rgba(255,255,255,0.8) !important;
+        border: 1.5px solid rgba(255,255,255,0.45) !important;
     }
 
     div[data-testid="stButton"] > button[kind="primary"] {
         background: white !important;
         color: black !important;
         border: 1.5px solid white !important;
+    }
+
+    div[data-baseweb="select"] > div {
+        background: rgba(255,255,255,0.03) !important;
+        border-radius: 14px !important;
+        border: 1px solid rgba(255,255,255,0.06) !important;
+        color: white !important;
+    }
+
+    label, .stSelectbox label, .stSelectbox div, .stSelectbox span {
+        color: #f3f4f6 !important;
     }
     </style>
     """,
@@ -513,85 +602,136 @@ st.markdown('<div class="title">Sentra Dashboard</div>', unsafe_allow_html=True)
 @st.fragment(run_every=REFRESH_SECONDS)
 def render_live_dashboard():
     raw_rows = load_logs()
+    rows = compute_agent_rows(raw_rows)
 
-    rows = []
-    for row in raw_rows:
-        timestamp = row.get("timestamp", row.get("date", ""))
-        risk_value = row.get("risk", row.get("risk_score", 0))
-        attempted_value = row.get("attempted_risk", 0)
-
-        normalized = {
-            "row_key": f'{timestamp}|{row.get("action_label", row.get("action_type", ""))}|{row.get("threat_type", "")}|{row.get("policy_triggered", "")}',
-            "timestamp_raw": timestamp,
-            "timestamp": format_timestamp(timestamp),
-            "action_label": row.get("action_label") or get_action_label(row),
-            "action_type": safe_text(row.get("action_type")),
-            "threat_type": normalize_threat(row),
-            "risk": safe_text(risk_value),
-            "attempted": safe_text(attempted_value),
-            "cum": safe_text(row.get("cumulative_risk", row.get("cum", "0/100"))),
-            "decision": normalize_decision(row),
-            "detail_title": safe_text(row.get("policy_triggered", row.get("detail_title", ""))),
-            "policy_description": safe_text(row.get("policy_description")),
-            "detail_body": safe_text(row.get("reason", row.get("detail_body", ""))),
-            "applied_risk_int": parse_risk_int(attempted_value),
-            "event_trace": build_event_trace(row),
+    all_agents = sorted(
+        {
+            safe_text(row.get("agent_id"))
+            for row in rows
+            if safe_text(row.get("agent_id")) != "—"
         }
-        rows.append(normalized)
+    )
 
-    rows = sorted(rows, key=lambda x: parse_dt(x["timestamp_raw"]), reverse=True)
-    rows = rows[:20]
+    filter_options = ["All Agents"] + all_agents
 
-    selected_row = None
-    if st.session_state.selected_row_key is not None:
-        for row in rows:
-            if row["row_key"] == st.session_state.selected_row_key:
-                selected_row = row
-                break
+    if st.session_state.agent_filter not in filter_options:
+        st.session_state.agent_filter = "All Agents"
 
-    if selected_row is None and rows:
-        if st.session_state.selected_index is not None and st.session_state.selected_index < len(rows):
-            selected_row = rows[st.session_state.selected_index]
+    top_left, top_right = st.columns([1.4, 5.6])
 
-    if selected_row is None and rows:
-        selected_row = rows[0]
+    with top_left:
+        selected_agent = st.selectbox(
+            "Agent Filter",
+            filter_options,
+            index=filter_options.index(st.session_state.agent_filter),
+            key="agent_filter_selectbox",
+        )
+        st.session_state.agent_filter = selected_agent
 
-    events = len(rows)
-    blocked_actions = sum(1 for r in rows if r["decision"] == "Blocked")
-    allowed_actions = sum(1 for r in rows if r["decision"] == "Allowed")
-    risk_total = max(parse_cum(r["cum"]) for r in rows) if rows else 0
+    with top_right:
+        st.markdown("")
+
+    if selected_agent == "All Agents":
+        filtered_rows = rows
+    else:
+        filtered_rows = [row for row in rows if row["agent_id"] == selected_agent]
+
+    if filtered_rows:
+        selected_row = next(
+            (r for r in filtered_rows if r["row_key"] == st.session_state.selected_row_key),
+            filtered_rows[0],
+        )
+        st.session_state.selected_row_key = selected_row["row_key"]
+    else:
+        selected_row = None
+        st.session_state.selected_row_key = None
+
+    active_agents = 0
+    shutdown_agents = 0
+
+    for agent_id in all_agents:
+        status = get_agent_status(agent_id, rows)
+        if status == "Shut Down":
+            shutdown_agents += 1
+        else:
+            active_agents += 1
+
+    total_events = len(rows)
+
+    if selected_agent != "All Agents":
+        selected_agent_status = get_agent_status(selected_agent, rows)
+        selected_agent_risk = get_agent_cumulative_risk(selected_agent, rows)
+        selected_agent_blocked = get_blocked_attempts(selected_agent, rows)
+        selected_metric_title = "Selected Agent Status"
+        selected_metric_value = selected_agent_status
+        selected_metric_sub = f"Risk {selected_agent_risk}/100 • Blocked Attempts {selected_agent_blocked}"
+    else:
+        selected_metric_title = "Agent View"
+        selected_metric_value = "All Agents"
+        selected_metric_sub = f"{len(all_agents)} monitored"
 
     m1, m2, m3, m4 = st.columns(4)
 
     with m1:
-        st.markdown('<div class="metric-title">Total Events</div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="metric-value">{events}</div>', unsafe_allow_html=True)
+        st.markdown(
+            f"""
+            <div class="metric-card">
+                <div class="metric-title">Total Events</div>
+                <div class="metric-value">{total_events}</div>
+                <div class="metric-sub">Live event stream</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
     with m2:
-        st.markdown('<div class="metric-title">Blocked Actions</div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="metric-value">{blocked_actions}</div>', unsafe_allow_html=True)
+        st.markdown(
+            f"""
+            <div class="metric-card">
+                <div class="metric-title">Active Agents</div>
+                <div class="metric-value">{active_agents}</div>
+                <div class="metric-sub">Agents still operating</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
     with m3:
-        st.markdown('<div class="metric-title">Allowed Actions</div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="metric-value">{allowed_actions}</div>', unsafe_allow_html=True)
+        st.markdown(
+            f"""
+            <div class="metric-card">
+                <div class="metric-title">Shut Down Agents</div>
+                <div class="metric-value">{shutdown_agents}</div>
+                <div class="metric-sub">Agents in terminal state</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
     with m4:
-        st.markdown('<div class="metric-title">Cumulative Risk</div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="metric-value">{risk_total}</div>', unsafe_allow_html=True)
+        st.markdown(
+            f"""
+            <div class="metric-card">
+                <div class="metric-title">{html.escape(selected_metric_title)}</div>
+                <div class="metric-value">{html.escape(selected_metric_value)}</div>
+                <div class="metric-sub">{html.escape(selected_metric_sub)}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
-    st.markdown('<div class="table-wrap"></div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-gap"></div>', unsafe_allow_html=True)
 
-    table_col, inspect_col = st.columns([4.3, 1.5])
+    table_col, inspect_col = st.columns([4.4, 1.8])
 
     with table_col:
-        widths = [1.45, 1.95, 1.45, 0.65, 0.95, 0.95, 1.25, 0.7]
+        widths = [1.55, 1.0, 1.8, 1.45, 0.9, 1.3, 0.65]
         headers = [
             "Timestamp",
+            "Agent",
             "Action",
             "Threat Type",
-            "Risk",
-            "Attempted",
-            "Cum",
+            "Attempted Risk",
             "Decision",
             "Inspect",
         ]
@@ -599,18 +739,14 @@ def render_live_dashboard():
         for col, header in zip(st.columns(widths), headers):
             col.markdown(f'<div class="table-header">{header}</div>', unsafe_allow_html=True)
 
-        for i, row in enumerate(rows):
-            c1, c2, c3, c4, c5, c6, c7, c8 = st.columns(widths)
+        for row in filtered_rows[:50]:
+            c1, c2, c3, c4, c5, c6, c7 = st.columns(widths)
 
             c1.markdown(f'<div class="cell">{html.escape(row["timestamp"])}</div>', unsafe_allow_html=True)
-            c2.markdown(
-                f'<div class="cell">{html.escape(row.get("action_label") or row.get("action_type") or "—")}</div>',
-                unsafe_allow_html=True
-            )
-            c3.markdown(f'<div class="cell">{html.escape(row["threat_type"])}</div>', unsafe_allow_html=True)
-            c4.markdown(f'<div class="cell">{html.escape(row["risk"])}</div>', unsafe_allow_html=True)
-            c5.markdown(f'<div class="cell">{html.escape(row["attempted"])}</div>', unsafe_allow_html=True)
-            c6.markdown(f'<div class="cell">{html.escape(row["cum"])}</div>', unsafe_allow_html=True)
+            c2.markdown(f'<div class="cell">{html.escape(row["agent_id"])}</div>', unsafe_allow_html=True)
+            c3.markdown(f'<div class="cell">{html.escape(row["action_label"])}</div>', unsafe_allow_html=True)
+            c4.markdown(f'<div class="cell">{html.escape(row["threat_type"])}</div>', unsafe_allow_html=True)
+            c5.markdown(f'<div class="cell">{html.escape(str(row["attempted"]))}</div>', unsafe_allow_html=True)
 
             pill_class = {
                 "Allowed": "allowed",
@@ -619,7 +755,7 @@ def render_live_dashboard():
                 "Require Human Review": "review",
             }.get(row["decision"], "allowed")
 
-            c7.markdown(
+            c6.markdown(
                 f'<span class="pill {pill_class}">{html.escape(row["decision"])}</span>',
                 unsafe_allow_html=True,
             )
@@ -628,68 +764,110 @@ def render_live_dashboard():
             icon = "●" if is_selected else "○"
             button_type = "primary" if is_selected else "secondary"
 
-            if c8.button(
+            if c7.button(
                 icon,
                 key=f"inspect_{row['row_key']}",
                 use_container_width=False,
                 type=button_type,
             ):
-                st.session_state.selected_index = i
                 st.session_state.selected_row_key = row["row_key"]
                 st.rerun()
 
             st.markdown('<div class="row-divider"></div>', unsafe_allow_html=True)
 
     with inspect_col:
-        if selected_row is not None:
-            r = selected_row
-
-            policy_triggered = safe_text(
-                r.get("policy_description")
-                or r.get("detail_title")
-                or "—"
+        if selected_row is None:
+            st.markdown(
+                """
+                <div class="inspect-card">
+                    <div class="inspect-title">Sentra Enforcement</div>
+                    <div class="inspect-value">No events available.</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
             )
-            why_it_matters = get_why_it_matters(r)
-            outcome = get_outcome(r)
+            return
 
-            trace_items = "".join(
-                f"<li>{html.escape(safe_text(item))}</li>"
-                for item in r.get("event_trace", ["—"])[-5:]
-            )
+        agent_id = selected_row["agent_id"]
+        agent_status = safe_text(selected_row.get("agent_status"))
+        agent_risk = parse_int(selected_row.get("cumulative_risk", 0), 0)
+        agent_blocked_attempts = parse_int(selected_row.get("blocked_attempts", 0), 0)
+        shutdown_reason = get_shutdown_reason(agent_id, rows)
+        why_it_matters = get_why_it_matters(selected_row)
+        outcome = get_outcome(selected_row)
 
-            inspect_html = (
-                '<div class="inspect-card">'
-                '<div class="inspect-title">Sentra Enforcement</div>'
+        trace_items = "".join(
+            f"<li>{html.escape(safe_text(item))}</li>"
+            for item in selected_row.get("event_trace", [])[-4:]
+        )
 
-                '<div class="inspect-block">'
-                '<div class="inspect-label">Action Type</div>'
-                f'<div class="inspect-value">{html.escape(r.get("action_label") or r.get("action_type") or "—")}</div>'
-                '</div>'
+        inspect_html = f"""
+<div class="inspect-card">
 
-                '<div class="inspect-block">'
-                '<div class="inspect-label">Policy Triggered</div>'
-                f'<div class="inspect-value">{html.escape(policy_triggered)}</div>'
-                '</div>'
+<div class="inspect-title">Sentra Enforcement</div>
 
-                '<div class="inspect-block">'
-                '<div class="inspect-label">Why It Matters</div>'
-                f'<div class="inspect-value">{html.escape(why_it_matters)}</div>'
-                '</div>'
+<div class="inspect-group-title">Agent State</div>
 
-                '<div class="inspect-block">'
-                '<div class="inspect-label">Outcome</div>'
-                f'<div class="inspect-value">{html.escape(outcome)}</div>'
-                '</div>'
+<div class="mini-grid">
 
-                '<div class="inspect-block">'
-                '<div class="inspect-label">Real-Time Enforcement Timeline</div>'
-                f'<ul class="trace-list">{trace_items}</ul>'
-                '</div>'
+<div class="mini-card">
+    <div class="mini-label">Agent</div>
+    <div class="mini-value">{html.escape(agent_id)}</div>
+</div>
 
-                '</div>'
-            )
+<div class="mini-card">
+    <div class="mini-label">Status</div>
+    <div class="mini-value">{html.escape(agent_status)}</div>
+</div>
 
-            st.markdown(inspect_html, unsafe_allow_html=True)
+<div class="mini-card">
+    <div class="mini-label">Cumulative Risk</div>
+    <div class="mini-value">{agent_risk}/{RISK_THRESHOLD}</div>
+</div>
+
+<div class="mini-card">
+    <div class="mini-label">Blocked Attempts</div>
+    <div class="mini-value">{agent_blocked_attempts}</div>
+</div>
+
+</div>
+
+
+
+<div class="inspect-group-title">Selected Event</div>
+
+<div class="inspect-block">
+    <div class="inspect-label">Action Type</div>
+    <div class="inspect-value">{html.escape(selected_row["action_label"])}</div>
+</div>
+
+<div class="inspect-block">
+    <div class="inspect-label">Policy Triggered</div>
+    <div class="inspect-value">{html.escape(selected_row["policy_description"])}</div>
+</div>
+
+<div class="inspect-block">
+    <div class="inspect-label">Outcome</div>
+    <div class="inspect-value">{html.escape(selected_row["decision"])}</div>
+</div>
+
+{f'''
+<div class="inspect-block">
+    <div class="inspect-label">Shutdown Reason</div>
+    <div class="inspect-value">{html.escape(shutdown_reason)}</div>
+</div>
+''' if agent_status == "Shut Down" else ""}
+
+<div class="inspect-block">
+    <div class="inspect-label">Real-Time Enforcement Timeline</div>
+    <ul class="trace-list">
+        {trace_items}
+    </ul>
+</div>
+
+</div>
+"""
+        st.markdown(inspect_html, unsafe_allow_html=True)
 
 
 render_live_dashboard()
