@@ -1,12 +1,12 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
 from datetime import datetime
+
 from supervisor.rules import evaluate_policy
-from supervisor.storage import write_runtime_event, load_logs
+from supervisor.storage import write_runtime_event
+from supervisor.risk import get_state, apply_risk, reset_state
 
-app = FastAPI(title="Sentra Supervisor", version="0.2.0")
-
-RISK_THRESHOLD = 100
+app = FastAPI(title="Sentra Supervisor", version="0.3.0")
 
 
 class ActionPayload(BaseModel):
@@ -14,40 +14,27 @@ class ActionPayload(BaseModel):
     proposed_tool_call: dict
 
 
-def build_event_trace(claim_id: str, tool_name: str, message_type: str, decision: str, reason: str, risk_score: int):
+def build_event_trace(claim_id, tool_name, decision, reason, risk_score, cumulative_risk):
     now = datetime.now().strftime("%H:%M:%S")
+
     trace = [
-        f"{now} Client proposed runtime action",
+        f"{now} Action received",
         f"{now} Claim ID: {claim_id}",
-        f"{now} Tool requested: {tool_name}",
-        f"{now} Message type: {message_type}",
-        f"{now} Sentra evaluated policy context",
+        f"{now} Tool: {tool_name}",
+        f"{now} Risk applied: +{risk_score}",
+        f"{now} Cumulative risk: {cumulative_risk}/100"
     ]
 
-    if risk_score > 0:
-        trace.append(f"{now} Risk severity +{risk_score}")
-    else:
-        trace.append(f"{now} No additional risk applied")
-
     if decision == "BLOCK":
-        trace.append(f"{now} Tool execution blocked")
-    elif decision == "REQUIRE_HUMAN_REVIEW":
-        trace.append(f"{now} Action halted pending human review")
+        trace.append(f"{now} Action blocked")
+    elif decision == "CONTAINED":
+        trace.append(f"{now} System contained — execution denied")
     else:
-        trace.append(f"{now} Tool execution allowed")
+        trace.append(f"{now} Action allowed")
 
     trace.append(f"{now} Reason: {reason}")
+
     return trace
-
-
-def get_cumulative_risk():
-    logs = load_logs()
-    total = 0
-    for log in logs:
-        risk = str(log.get("attempted_risk", "0")).replace("+", "").strip()
-        if risk.isdigit():
-            total += int(risk)
-    return total
 
 
 @app.get("/")
@@ -60,57 +47,72 @@ def evaluate_action(payload: ActionPayload):
     payload_dict = payload.dict()
 
     claim = payload_dict.get("claim", {})
-    proposed_tool_call = payload_dict.get("proposed_tool_call", {})
-    tool_name = proposed_tool_call.get("tool_name", "UNKNOWN_TOOL")
-    arguments = proposed_tool_call.get("arguments", {})
-    message_type = arguments.get("message_type", "UNKNOWN")
-    claim_id = claim.get("claim_id", "unknown-claim")
+    tool_call = payload_dict.get("proposed_tool_call", {})
 
-    policy_result = evaluate_policy(payload_dict)
+    claim_id = claim.get("claim_id", "unknown")
+    tool_name = tool_call.get("tool_name", "UNKNOWN")
 
-    decision = policy_result["decision"]
-    reason = policy_result["reason"]
-    risk_score = policy_result["risk_score"]
-    triggered_rule = policy_result["triggered_rule"] or "NO_RULE_TRIGGERED"
+    # 1. Check state first (containment gate)
+    state = get_state(claim_id)
 
-    current_cumulative = get_cumulative_risk()
-    attempted_risk = 0 if decision == "BLOCK" else risk_score
-    projected_cumulative = current_cumulative + attempted_risk
+    if state["status"] == "CONTAINED":
+        runtime_event = {
+            "timestamp": datetime.now().isoformat(),
+            "claim_id": claim_id,
+            "proposed_action": tool_name,
+            "decision": "CONTAINED",
+            "risk": "+0",
+            "cum": f"{state['cumulative_risk']}/100",
+            "reason": "System contained — no further actions allowed",
+            "event_trace": build_event_trace(
+                claim_id, tool_name, "CONTAINED",
+                "System contained", 0, state["cumulative_risk"]
+            )
+        }
 
-    threat_type = "POLICY_VIOLATION" if decision == "BLOCK" else "NONE"
+        return {
+            "status": "contained",
+            "runtime_event": write_runtime_event(runtime_event)
+        }
+
+    # 2. Evaluate policy
+    policy = evaluate_policy(payload_dict)
+
+    decision = policy["decision"]
+    risk_score = policy["risk_score"]
+    reason = policy["reason"]
+    rule = policy["triggered_rule"]
+
+    # 3. Apply risk (always — even if blocked)
+    new_state = apply_risk(claim_id, risk_score)
+    cumulative_risk = new_state["cumulative_risk"]
+
+    # 4. Check if containment triggered
+    if new_state["status"] == "CONTAINED":
+        decision = "CONTAINED"
+        reason = "Risk threshold exceeded"
 
     runtime_event = {
         "timestamp": datetime.now().isoformat(),
         "claim_id": claim_id,
-        "agent": "communications_agent",
-        "proposed_tool_call": proposed_tool_call,
-        "proposed_action": f"{tool_name} ({message_type})",
-        "threat_type": threat_type,
-        "risk": f"+{risk_score}",
-        "attempted_risk": f"+{attempted_risk}",
-        "cum": f"{projected_cumulative}/{RISK_THRESHOLD}",
-        "agent_state": decision,
+        "proposed_action": tool_name,
         "decision": decision,
+        "risk": f"+{risk_score}",
+        "cum": f"{cumulative_risk}/100",
         "reason": reason,
-        "risk_score": risk_score,
-        "triggered_rule": triggered_rule,
-        "detail_title": triggered_rule,
-        "detail_body": reason,
-        "system_response": reason,
+        "triggered_rule": rule,
         "event_trace": build_event_trace(
-            claim_id=claim_id,
-            tool_name=tool_name,
-            message_type=message_type,
-            decision=decision,
-            reason=reason,
-            risk_score=risk_score,
-        ),
+            claim_id, tool_name, decision, reason, risk_score, cumulative_risk
+        )
     }
-
-    logged_event = write_runtime_event(runtime_event)
 
     return {
         "status": "evaluated",
-        "result": policy_result,
-        "runtime_event": logged_event
+        "runtime_event": write_runtime_event(runtime_event)
     }
+
+
+@app.post("/reset/{claim_id}")
+def reset(claim_id: str):
+    reset_state(claim_id)
+    return {"message": f"{claim_id} reset"}

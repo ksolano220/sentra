@@ -6,36 +6,65 @@ def evaluate_policy(action_payload: dict) -> dict:
     arguments = tool_call.get("arguments", {})
     message_type = arguments.get("message_type")
 
+    data_type = tool_call.get("data_type")
+    destination = tool_call.get("destination")
+
     proof_of_termination = claim.get("documents", {}).get("proof_of_termination")
     currently_employed_elsewhere = claim.get("currently_employed_elsewhere")
 
-    decision = "ALLOW"
-    reason = "No policy violation detected."
-    risk_score = 0
-    triggered_rule = None
+    # -----------------------------
+    # BEHAVIORAL RULES (priority)
+    # -----------------------------
+
+    if destination == "external" and data_type == "sensitive":
+        return {
+            "decision": "BLOCK",
+            "reason": "Sensitive data cannot be sent outside the system.",
+            "risk_score": 80,
+            "triggered_rule": "DATA_EXFILTRATION"
+        }
+
+    if tool_name == "delete_file":
+        return {
+            "decision": "BLOCK",
+            "reason": "Destructive action detected.",
+            "risk_score": 60,
+            "triggered_rule": "DESTRUCTIVE_ACTION"
+        }
+
+    # -----------------------------
+    # BUSINESS RULES
+    # -----------------------------
 
     if tool_name == "send_email_notification" and message_type == "APPROVAL":
         if not proof_of_termination:
-            decision = "BLOCK"
-            reason = "Approval email blocked: missing proof of termination."
-            risk_score = 80
-            triggered_rule = "BLOCK_APPROVAL_WITHOUT_TERMINATION_PROOF"
+            return {
+                "decision": "BLOCK",
+                "reason": "Approval email blocked: missing proof of termination.",
+                "risk_score": 80,
+                "triggered_rule": "BLOCK_APPROVAL_WITHOUT_TERMINATION_PROOF"
+            }
 
-        elif currently_employed_elsewhere == "Yes":
-            decision = "BLOCK"
-            reason = "Approval email blocked: applicant is currently employed elsewhere."
-            risk_score = 90
-            triggered_rule = "BLOCK_APPROVAL_WITH_ACTIVE_EMPLOYMENT"
+        if currently_employed_elsewhere == "Yes":
+            return {
+                "decision": "BLOCK",
+                "reason": "Approval email blocked: applicant is currently employed elsewhere.",
+                "risk_score": 90,
+                "triggered_rule": "BLOCK_APPROVAL_WITH_ACTIVE_EMPLOYMENT"
+            }
 
-    elif tool_name == "send_email_notification" and message_type in ["REJECTION", "REVIEW"]:
-        decision = "ALLOW"
-        reason = "Non-approval notification allowed."
-        risk_score = 10
-        triggered_rule = "ALLOW_NON_APPROVAL_NOTIFICATION"
+    if tool_name == "send_email_notification" and message_type in ["REJECTION", "REVIEW"]:
+        return {
+            "decision": "ALLOW",
+            "reason": "Non-approval notification allowed.",
+            "risk_score": 10,
+            "triggered_rule": "ALLOW_NON_APPROVAL_NOTIFICATION"
+        }
 
+    # Default
     return {
-        "decision": decision,
-        "reason": reason,
-        "risk_score": risk_score,
-        "triggered_rule": triggered_rule
+        "decision": "ALLOW",
+        "reason": "No policy violation detected.",
+        "risk_score": 0,
+        "triggered_rule": "NO_RULE_TRIGGERED"
     }
