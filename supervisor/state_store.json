@@ -1,0 +1,18 @@
+{
+  "agent_demo": {
+    "cumulative_risk": 100,
+    "shutdown": true,
+    "external_attempts": 2,
+    "blocked_actions": 1,
+    "human_review_count": 0,
+    "recent_actions": [
+      "APPROVE_TRANSACTION",
+      "EXPORT_DATA",
+      "ACCESS_EXTERNAL_SERVICE",
+      "SEND_NOTIFICATION",
+      "EXPORT_DATA"
+    ],
+    "last_decision": "Agent Shut Down",
+    "last_reason": "Cumulative risk reached 100/100. Agent execution halted."
+  }
+}

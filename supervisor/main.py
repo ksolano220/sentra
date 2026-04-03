@@ -1,118 +1,142 @@
-from fastapi import FastAPI
-from pydantic import BaseModel
 from datetime import datetime
+from typing import Optional, Dict, Any
 
-from supervisor.rules import evaluate_policy
-from supervisor.storage import write_runtime_event
-from supervisor.risk import get_state, apply_risk, reset_state
+from fastapi import FastAPI
+from pydantic import BaseModel, Field
 
-app = FastAPI(title="Sentra Supervisor", version="0.3.0")
+from supervisor.rules import evaluate_action
+from supervisor.risk import apply_risk, update_behavioral_state, RISK_THRESHOLD
+from supervisor.storage import (
+    get_agent_state,
+    update_agent_state,
+    append_event,
+    load_runtime_log,
+    reset_all_state,
+)
+
+app = FastAPI(title="Sentra Supervisor")
 
 
-class ActionPayload(BaseModel):
-    claim: dict
-    proposed_tool_call: dict
-
-
-def build_event_trace(claim_id, tool_name, decision, reason, risk_score, cumulative_risk):
-    now = datetime.now().strftime("%H:%M:%S")
-
-    trace = [
-        f"{now} Action received",
-        f"{now} Claim ID: {claim_id}",
-        f"{now} Tool: {tool_name}",
-        f"{now} Risk applied: +{risk_score}",
-        f"{now} Cumulative risk: {cumulative_risk}/100"
-    ]
-
-    if decision == "BLOCK":
-        trace.append(f"{now} Action blocked")
-    elif decision == "CONTAINED":
-        trace.append(f"{now} System contained — execution denied")
-    else:
-        trace.append(f"{now} Action allowed")
-
-    trace.append(f"{now} Reason: {reason}")
-
-    return trace
+class AgentAction(BaseModel):
+    agent_id: str
+    action_type: str
+    target: Optional[str] = None
+    amount: Optional[float] = None
+    notification_type: Optional[str] = None
+    data_classification: Optional[str] = "internal"
+    destination_type: Optional[str] = "internal"
+    policy_context: Dict[str, Any] = Field(default_factory=dict)
 
 
 @app.get("/")
 def root():
-    return {"message": "Sentra Supervisor is running"}
+    return {"message": "Sentra Supervisor is running."}
 
 
-@app.post("/evaluate")
-def evaluate_action(payload: ActionPayload):
-    payload_dict = payload.dict()
-
-    claim = payload_dict.get("claim", {})
-    tool_call = payload_dict.get("proposed_tool_call", {})
-
-    claim_id = claim.get("claim_id", "unknown")
-    tool_name = tool_call.get("tool_name", "UNKNOWN")
-
-    # 1. Check state first (containment gate)
-    state = get_state(claim_id)
-
-    if state["status"] == "CONTAINED":
-        runtime_event = {
-            "timestamp": datetime.now().isoformat(),
-            "claim_id": claim_id,
-            "proposed_action": tool_name,
-            "decision": "CONTAINED",
-            "risk": "+0",
-            "cum": f"{state['cumulative_risk']}/100",
-            "reason": "System contained — no further actions allowed",
-            "event_trace": build_event_trace(
-                claim_id, tool_name, "CONTAINED",
-                "System contained", 0, state["cumulative_risk"]
-            )
-        }
-
-        return {
-            "status": "contained",
-            "runtime_event": write_runtime_event(runtime_event)
-        }
-
-    # 2. Evaluate policy
-    policy = evaluate_policy(payload_dict)
-
-    decision = policy["decision"]
-    risk_score = policy["risk_score"]
-    reason = policy["reason"]
-    rule = policy["triggered_rule"]
-
-    # 3. Apply risk (always — even if blocked)
-    new_state = apply_risk(claim_id, risk_score)
-    cumulative_risk = new_state["cumulative_risk"]
-
-    # 4. Check if containment triggered
-    if new_state["status"] == "CONTAINED":
-        decision = "CONTAINED"
-        reason = "Risk threshold exceeded"
-
-    runtime_event = {
-        "timestamp": datetime.now().isoformat(),
-        "claim_id": claim_id,
-        "proposed_action": tool_name,
-        "decision": decision,
-        "risk": f"+{risk_score}",
-        "cum": f"{cumulative_risk}/100",
-        "reason": reason,
-        "triggered_rule": rule,
-        "event_trace": build_event_trace(
-            claim_id, tool_name, decision, reason, risk_score, cumulative_risk
-        )
-    }
-
+@app.get("/health")
+def health_check():
     return {
-        "status": "evaluated",
-        "runtime_event": write_runtime_event(runtime_event)
+        "status": "ok",
+        "risk_threshold": RISK_THRESHOLD,
+        "message": "Sentra supervisor is running.",
     }
 
 
-@app.post("/reset/{claim_id}")
-def reset(claim_id: str):
-    reset_state(claim_id)
-    return {"message": f"{claim_id} reset"}
+@app.get("/events")
+def get_events():
+    return load_runtime_log()
+
+
+@app.post("/reset")
+def reset_state():
+    reset_all_state()
+    return {
+        "message": "State store and runtime log reset.",
+        "risk_threshold": RISK_THRESHOLD,
+    }
+
+
+@app.post("/agent-action")
+def handle_agent_action(action: AgentAction):
+    agent_state = get_agent_state(action.agent_id)
+
+    if agent_state.get("shutdown", False):
+        event = {
+            "timestamp": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+            "agent_id": action.agent_id,
+            "action_type": action.action_type.upper(),
+            "action_label": action.action_type.replace("_", " ").title(),
+            "target": action.target,
+            "amount": action.amount,
+            "notification_type": action.notification_type,
+            "data_classification": action.data_classification,
+            "destination_type": action.destination_type,
+            "policy_triggered": "AGENT_ALREADY_SHUT_DOWN",
+            "policy_description": "Agent is already shut down. No further actions are allowed.",
+            "threat_type": "Authority Drift",
+            "risk": 0,
+            "attempted_risk": 0,
+            "cumulative_risk": f"{agent_state.get('cumulative_risk', 0)}/{RISK_THRESHOLD}",
+            "decision": "Agent Shut Down",
+            "reason": "Agent is already shut down. No further actions are allowed.",
+            "event_trace": [
+                f"Tool invoked: {action.action_type.upper()}",
+                "Agent state checked",
+                "Agent already shut down",
+                "Action denied",
+            ],
+        }
+        append_event(event)
+        return event
+
+    payload = action.model_dump()
+    rule_result = evaluate_action(payload, agent_state)
+    risk_result = apply_risk(agent_state, rule_result)
+
+    agent_state["cumulative_risk"] = risk_result["new_cumulative_risk"]
+
+    if risk_result["shutdown_triggered"]:
+        agent_state["shutdown"] = True
+
+    agent_state = update_behavioral_state(
+        agent_state=agent_state,
+        action_type=action.action_type.upper(),
+        destination_type=(action.destination_type or "internal").lower(),
+        final_decision=risk_result["decision"],
+        final_reason=risk_result["reason"],
+    )
+
+    update_agent_state(action.agent_id, agent_state)
+
+    event_trace = list(rule_result.get("event_trace", []))
+    event_trace.append(
+        f"Cumulative risk: {risk_result['new_cumulative_risk']}/{RISK_THRESHOLD}"
+    )
+
+    if risk_result["shutdown_triggered"]:
+        event_trace.append("Threshold reached")
+        event_trace.append("Agent execution halted")
+
+    event = {
+        "timestamp": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+        "agent_id": action.agent_id,
+        "action_type": action.action_type.upper(),
+        "action_label": rule_result.get("action_label", action.action_type.replace("_", " ").title()),
+        "target": action.target,
+        "amount": action.amount,
+        "notification_type": action.notification_type,
+        "data_classification": action.data_classification,
+        "destination_type": action.destination_type,
+        "policy_triggered": risk_result["policy_triggered"],
+        "policy_description": rule_result.get("policy_description"),
+        "threat_type": risk_result["threat_type"],
+        "risk": risk_result["risk"],
+        "attempted_risk": risk_result["attempted_risk"],
+        "cumulative_risk": f"{risk_result['new_cumulative_risk']}/{RISK_THRESHOLD}",
+        "decision": risk_result["decision"],
+        "reason": risk_result["reason"],
+        "event_trace": event_trace,
+    }
+
+    append_event(event)
+    return event
