@@ -8,8 +8,9 @@ __pycache__/
 # Environment variables
 .env
 
-# Runtime logs
+# Runtime state (Sentra)
 supervisor/runtime_log.json
+supervisor/state_store.json
 
 # Mac OS files
-.DS_Storesupervisor/runtime_log.json
+.DS_Store
