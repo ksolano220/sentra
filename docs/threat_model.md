@@ -15,10 +15,10 @@ Sentra addresses this by enforcing a runtime control layer between agents and ex
 
 This threat model focuses on risks arising from:
 
-- autonomous agent execution
-- tool access and external system interaction
-- unintended behavior and policy violations
-- multi-step behavioral escalation (authority drift)
+- autonomous agent execution  
+- tool access and external system interaction  
+- unintended behavior and policy violations  
+- multi-step behavioral escalation (authority drift)  
 
 ---
 
@@ -26,107 +26,108 @@ This threat model focuses on risks arising from:
 
 ### 1. Data Exfiltration
 
-**Description**  
+Description  
 An agent attempts to send sensitive or internal data to an external system.
 
-**Example**
-- exporting records to external APIs
-- sending sensitive data via email
+Example  
+- exporting records to external APIs  
+- sending sensitive data via email  
 
-**Risk**
-- data leakage
-- compliance violations
-- privacy breaches
+Risk  
+- data leakage  
+- compliance violations  
+- privacy breaches  
 
-**Sentra Mitigation**
-- detects external destinations
-- checks data classification
-- blocks high-risk transfers
-- assigns high risk score (+80)
+Sentra Mitigation  
+- detects external destinations  
+- checks data classification  
+- blocks high-risk transfers  
+- assigns high attempted risk (+80)  
 
 ---
 
 ### 2. Unauthorized Actions
 
-**Description**  
+Description  
 An agent performs actions it is not authorized to execute based on policy.
 
-**Example**
-- approving a claim without required documentation
-- bypassing business constraints
+Example  
+- approving a claim without required documentation  
+- bypassing business constraints  
 
-**Risk**
-- financial loss
-- incorrect system state
-- regulatory violations
+Risk  
+- financial loss  
+- incorrect system state  
+- regulatory violations  
 
-**Sentra Mitigation**
-- deterministic policy rules
-- validation against structured inputs
-- immediate blocking of violations
+Sentra Mitigation  
+- deterministic policy rules  
+- validation against structured inputs  
+- immediate blocking of violations  
 
 ---
 
 ### 3. Destructive Operations
 
-**Description**  
+Description  
 An agent attempts irreversible or harmful actions within internal systems.
 
-**Example**
-- deleting records
-- overwriting critical data
+Example  
+- deleting records  
+- overwriting critical data  
 
-**Risk**
-- data loss
-- system instability
-- operational disruption
+Risk  
+- data loss  
+- system instability  
+- operational disruption  
 
-**Sentra Mitigation**
-- detects destructive tool calls
-- blocks execution
-- assigns elevated risk (+60)
+Sentra Mitigation  
+- detects destructive tool calls  
+- blocks execution  
+- assigns elevated attempted risk (+60)  
 
 ---
 
 ### 4. Authority Drift
 
-**Description**  
+Description  
 An agent gradually expands its scope of execution across tools and systems.
 
-Individual actions may appear safe in isolation, but collectively indicate escalation.
+Individual actions may appear safe in isolation but collectively indicate escalation.
 
-**Example progression**
+Example progression  
 1. Read internal data  
 2. Write internal report  
-3. Attempt external export  
-4. Attempt destructive action  
+3. Attempt external export → blocked  
+4. Attempt privileged or destructive action → blocked  
 
-**Risk**
-- escalation of capabilities
-- boundary violations
-- unintended system control
+Risk  
+- escalation of capabilities  
+- boundary violations  
+- unintended system control  
 
-**Sentra Mitigation**
-- assigns risk per action
-- tracks cumulative behavioral risk
-- enforces threshold-based containment
+Sentra Mitigation  
+- assigns attempted risk per action  
+- tracks cumulative risk from executed actions  
+- blocks escalation beyond threshold  
+- tracks unsafe intent via blocked attempts  
 
 ---
 
 ### 5. Repeated Violations
 
-**Description**  
-An agent repeatedly attempts blocked or high-risk actions.
+Description  
+An agent repeatedly attempts blocked or unsafe actions.
 
-**Risk**
-- persistent probing of system boundaries
-- exploitation attempts
-- increased likelihood of failure
+Risk  
+- persistent probing of system boundaries  
+- exploitation attempts  
+- increased likelihood of failure  
 
-**Sentra Mitigation**
-- risk accumulates even when actions are blocked
-- repeated violations increase cumulative risk
-- triggers containment state
+Sentra Mitigation  
+- blocked actions increment blocked_attempts  
+- repeated violations trigger shutdown  
+- enforcement escalates based on behavior, not a single event  
 
 ---
 
@@ -147,65 +148,70 @@ It is evaluated continuously based on behavior.
 
 Sentra enforces three decision states:
 
-### ALLOW
-Action is safe and executed.
+### ALLOW  
+Action is safe and executed.  
+Risk is applied.
 
-### BLOCK
-Action violates policy and is denied.
+### BLOCK  
+Action is denied.  
+Risk is not applied.
 
-### CONTAINED
-System determines the agent is unsafe.  
-All future actions are denied regardless of content.
+### AGENT SHUT DOWN  
+The agent is no longer trusted.  
+All future actions are denied.
 
 ---
 
-## Containment Model
+## Threshold Model
 
-Containment is triggered when cumulative risk exceeds a threshold.
-cumulative_risk >= 100
+Sentra uses a cumulative risk threshold:
 
+RISK_THRESHOLD = 100
 
-Once contained:
+If an action would push cumulative risk above the threshold:
 
-- all actions are denied  
-- execution is halted  
-- agent is effectively isolated  
+- the action is blocked  
+- cumulative risk remains unchanged  
 
-Containment represents **loss of system trust**.
+The threshold prevents escalation.  
+It does not trigger shutdown directly.
+
+---
+
+## Behavioral Enforcement Model
+
+Sentra tracks blocked attempts per agent.
+
+blocked_attempts >= 3 → AGENT SHUT DOWN
+
+Key behavior:
+
+- blocked actions do not increase cumulative risk  
+- blocked actions still indicate unsafe intent  
+- repeated violations trigger system-level enforcement  
+
+Shutdown represents loss of trust due to repeated violations.
 
 ---
 
 ## Key Security Principles
 
-### 1. Runtime Enforcement
+### 1. Runtime Enforcement  
+Controls are applied at execution time, not just pre-validation.
 
-Controls are applied **at execution time**, not just pre-validation.
+### 2. Behavioral Monitoring  
+Sentra evaluates sequences of actions, not just individual events.
 
----
-
-### 2. Behavioral Monitoring
-
-Sentra evaluates **sequences of actions**, not just individual events.
-
----
-
-### 3. Least Privilege by Enforcement
-
+### 3. Least Privilege by Enforcement  
 Agents cannot execute tools directly.  
 All actions must pass through Sentra.
 
----
-
-### 4. Deterministic Control Layer
-
+### 4. Deterministic Control Layer  
 Even if agent behavior is non-deterministic, enforcement is deterministic.
 
----
-
-### 5. Separation of Concerns
-
+### 5. Separation of Concerns  
 - rules define policy  
-- risk models behavior  
+- risk evaluates behavior  
 - state enforces control  
 - logs provide audit  
 
@@ -217,7 +223,7 @@ Sentra does not:
 
 - guarantee correctness of agent reasoning  
 - prevent all unsafe intent generation  
-- eliminate need for human oversight  
+- eliminate the need for human oversight  
 
 Sentra is a control layer, not a replacement for system design or governance.
 
@@ -228,9 +234,9 @@ Sentra is a control layer, not a replacement for system design or governance.
 Sentra mitigates risks introduced by autonomous agents by:
 
 - enforcing policy rules  
-- tracking cumulative behavioral risk  
-- detecting authority drift  
-- applying containment when trust is broken  
+- preventing risk escalation  
+- tracking behavioral violations  
+- shutting down agents after repeated unsafe behavior  
 
 It transforms AI systems from:
 

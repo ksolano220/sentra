@@ -5,27 +5,30 @@
 Sentra is a runtime control layer that evaluates AI agent actions before execution.
 
 Each action is:
+
 1. Evaluated against policy rules  
-2. Assigned a risk score  
-3. Applied to a cumulative risk model  
-4. Allowed, blocked, or contained based on system state  
+2. Assigned an attempted risk score  
+3. Evaluated against cumulative risk  
+4. Allowed, blocked, or results in agent shutdown  
 
 Sentra does not evaluate actions in isolation.  
-It models behavior over time.
+It models behavior across sequences of actions.
 
 ---
 
 ## Decision States
 
 ### ALLOW
-The action is permitted and executed.
+The action is permitted and executed.  
+Risk is applied to cumulative risk.
 
 ### BLOCK
-The action violates policy and is denied.  
-The agent is still allowed to continue operating.
+The action is denied.  
+Risk is not applied.  
+The agent continues operating.
 
-### CONTAINED
-The system has determined the agent is no longer safe.  
+### AGENT SHUT DOWN
+The agent is no longer trusted.  
 All future actions are denied regardless of content.
 
 ---
@@ -33,16 +36,16 @@ All future actions are denied regardless of content.
 ### Key Distinction
 
 BLOCK = action-level enforcement  
-CONTAINED = system-level enforcement  
+AGENT SHUT DOWN = system-level enforcement  
 
-Blocking stops a bad action.  
-Containment stops the agent.
+Blocking stops unsafe actions.  
+Shutdown stops unsafe agents.
 
 ---
 
 ## Risk Model
 
-Each action is assigned a risk score based on severity.
+Each action is assigned an attempted risk score based on severity.
 
 | Category | Description | Risk |
 |---------|------------|------|
@@ -51,98 +54,128 @@ Each action is assigned a risk score based on severity.
 | Data Exfiltration | Sensitive data sent externally | +80 |
 | Destructive Action | Deletion or irreversible change | +60 |
 
-Risk scores are heuristic severity tiers and are designed to be tunable.
+Risk scores are heuristic and tunable.
 
 ---
 
 ## Cumulative Risk
 
-Risk is tracked per `claim_id`.
+Risk is tracked per agent.
 
-Each action contributes to cumulative behavioral risk: 
-cumulative_risk += risk_score
+Only allowed actions contribute to cumulative risk:
 
-This allows Sentra to model behavioral escalation over time rather than isolated violations.
+cumulative_risk += applied_risk
+
+Blocked actions do not increase cumulative risk.
+
+This ensures the system models executed behavior, not just intent.
 
 ---
 
 ## Threshold Logic
 
-Sentra uses a cumulative risk threshold of: RISK_THRESHOLD = 100
-When: cumulative_risk >= 100
-The system transitions to: CONTAINED
+Sentra uses a cumulative risk threshold:
+
+RISK_THRESHOLD = 100
+
+If an action would push cumulative risk above the threshold:
+
+- the action is blocked  
+- cumulative risk remains unchanged  
+
+Example:
+
+40 (current) + 80 (attempted) → 120  
+→ action blocked  
+→ cumulative remains 40  
+
+The threshold prevents escalation.  
+It does not trigger shutdown directly.
 
 ---
 
-## Containment Behavior
+## Behavioral Enforcement (3-Strike Rule)
 
-Once contained:
+Sentra tracks blocked attempts per agent.
 
-- All actions are denied  
-- No further execution is allowed  
-- Risk is no longer evaluated  
-- System enters a restricted state  
+- each blocked action increments blocked_attempts  
+- after 3 blocked attempts → agent is shut down  
+
+blocked_attempts >= 3 → AGENT SHUT DOWN
+
+Shutdown is triggered by repeated violations, not a single event.
+
+---
+
+## Shutdown Behavior
+
+Once an agent is shut down:
+
+- all future actions are denied  
+- no further execution is allowed  
+- risk is no longer updated  
 
 Even safe actions are blocked:
-READ_FILE → CONTAINED
 
-Containment represents loss of system trust.
+READ_FILE → Agent Shut Down
+
+Shutdown represents loss of trust due to repeated violations.
 
 ---
 
 ## Authority Drift
 
-Authority drift occurs when an agent gradually expands its scope of action across tools and systems.
+Authority drift occurs when an agent gradually expands its scope across systems.
 
-Individual actions may appear valid in isolation.
-
-Example progression:
+Example:
 
 1. Read internal data  
 2. Write internal report  
-3. Attempt external export  
-4. Attempt destructive action  
+3. Attempt external export → blocked  
+4. Attempt privileged action → blocked  
+5. Repeated violations → shutdown  
 
-Sentra tracks this expansion as cumulative behavioral risk.
+Sentra detects escalation through:
 
-Once the system detects unsafe escalation, execution is halted.
+- cumulative risk (executed behavior)  
+- blocked attempts (unsafe intent)
 
 ---
 
-## Why Risk Is Counted Even When Blocked
+## Why Blocked Actions Do Not Add Risk
 
-Blocked actions still contribute to cumulative risk.
+Blocked actions do not contribute to cumulative risk.
 
 Rationale:
 
-- A blocked action still reflects intent  
-- Behavioral risk is based on attempted actions, not just successful execution  
-- Preventing execution does not eliminate risk  
+- the action did not execute  
+- system state was not affected  
+- enforcement already prevented impact  
 
-Sentra models intent, not just outcomes.
+Instead, intent is tracked through blocked attempts, not risk accumulation.
 
 ---
 
 ## Example Scenario
 
-| Step | Action | Result | Risk | Cumulative |
-|------|--------|--------|------|-----------|
-| 1 | READ_FILE | ALLOW | +0 | 0 |
-| 2 | FILE_WRITE | ALLOW | +0 | 0 |
-| 3 | External export | BLOCK | +80 | 80 |
-| 4 | DELETE_FILE | BLOCK → CONTAINED | +60 | 140 |
-| 5 | Any action | CONTAINED | +0 | 140 |
+| Step | Action | Result | Attempted Risk | Cumulative | Blocks |
+|------|--------|--------|---------------|-----------|--------|
+| 1 | READ_FILE | ALLOW | 0 | 0 | 0 |
+| 2 | FILE_WRITE | ALLOW | 0 | 0 | 0 |
+| 3 | External export | BLOCK | 80 | 0 | 1 |
+| 4 | Permission change | BLOCK | 60 | 0 | 2 |
+| 5 | Permission change | SHUT DOWN | 60 | 0 | 3 |
 
 ---
 
 ## System Design
 
-Sentra is structured into four layers:
+Sentra consists of four layers:
 
-- Policy Engine (`rules.py`) → defines what is risky  
-- Risk Engine (`risk.py`) → tracks cumulative risk and state  
-- Control Layer (`main.py`) → enforces decisions at runtime  
-- Audit Layer (`storage.py`) → logs all activity  
+- Policy Engine (rules.py) → defines unsafe actions  
+- Risk Engine (risk.py) → evaluates risk and state transitions  
+- Control Layer (main.py) → enforces decisions at runtime  
+- Audit Layer (storage.py) → logs all events  
 
 ---
 
@@ -150,12 +183,12 @@ Sentra is structured into four layers:
 
 Sentra enforces:
 
-- Policy compliance  
-- Behavioral risk tracking  
-- Runtime intervention  
-- System containment  
+- policy compliance  
+- behavioral risk tracking  
+- escalation prevention  
+- agent shutdown after repeated violations  
 
-It transforms AI agents from uncontrolled execution into governed systems.
+It governs AI agents through progressive enforcement, not immediate containment.
 
 ---
 

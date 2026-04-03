@@ -2,240 +2,241 @@
 
 ## System Overview
 
-Sentra is a runtime supervision layer that intercepts actions proposed
-by AI agents before those actions execute.
+Sentra is a runtime supervision layer that intercepts actions proposed by AI agents before execution.
 
-The system evaluates agent behavior, assigns risk, maintains cumulative
-state, and determines whether an action should proceed.
+It evaluates each action, applies deterministic rules, assigns risk, maintains cumulative state, and enforces execution decisions.
 
 Execution pipeline:
 
-AI Agent ↓ Sentra Runtime Interceptor ↓ Policy Rules ↓ Risk Engine ↓
-Execution Decision ↓ Tool Environment ↓ Monitoring Dashboard
+AI Agent ↓ Sentra Runtime Interceptor ↓ Policy Rules ↓ Risk Engine ↓ Execution Decision ↓ Tool Environment ↓ Monitoring Dashboard
 
-The agent proposes actions, but Sentra determines whether those actions
-can execute.
+The agent proposes actions. Sentra decides whether they execute.
 
-------------------------------------------------------------------------
+---
 
 ## Execution Model
 
-Sentra does not evaluate actions in isolation.
+Sentra evaluates actions statefully, not in isolation.
 
-Each action is: 1. Evaluated against policy rules 2. Assigned a risk
-score 3. Applied to a cumulative risk model 4. Evaluated against system
-state 5. Allowed, blocked, or contained
+Each action is:
 
-Execution decisions are stateful and persist across multiple actions.
+- evaluated against policy rules  
+- assigned an attempted risk score  
+- evaluated against cumulative risk  
+- evaluated against behavioral history (blocked attempts)  
+- allowed, blocked, or results in agent shutdown  
 
-------------------------------------------------------------------------
+Execution decisions persist across actions.
 
-# Components
+---
 
-## AI Agent
+## Components
 
-The AI agent generates structured action proposals as part of a
-workflow.
+### AI Agent
+
+Agents generate structured action proposals.
 
 Example workflow:
 
 intake agent ↓ eligibility agent ↓ disbursement agent
 
-Each agent produces an action proposal rather than executing tools
-directly.
+Agents propose actions. They do not execute tools directly.
 
-------------------------------------------------------------------------
+---
 
-## Runtime Interceptor
+### Runtime Interceptor
 
-The runtime interceptor captures agent actions before they reach
-external systems.
+Intercepts all agent actions before execution.
 
 Responsibilities:
 
--   receive structured agent action requests
--   route actions through policy rules and risk evaluation
--   enforce execution decisions
--   prevent agents from directly calling external tools
+- receive structured action requests  
+- route through policy and risk evaluation  
+- enforce decisions  
+- prevent direct tool access  
 
-This component acts as the control boundary between agents and external
-systems.
+This is the control boundary.
 
-------------------------------------------------------------------------
+---
 
-## Policy Rules
+### Policy Rules
 
-Policy rules are deterministic checks that identify clearly unsafe
-actions.
+Deterministic checks for unsafe actions.
 
 Examples:
 
--   exporting sensitive data externally
--   destructive operations (e.g., deleting records)
--   invalid approval actions based on missing requirements
+- unauthorized permission changes  
+- unsafe approval notifications  
+- sensitive data exfiltration  
 
 Rules can:
 
--   block an action immediately
--   assign a risk score
+- immediately block an action  
+- assign attempted risk  
 
-------------------------------------------------------------------------
+---
 
-## Risk Engine
+### Risk Engine
 
-The risk engine assigns a risk score to each action and tracks
-cumulative behavioral risk over time.
+Tracks behavioral risk over time.
 
-Risk is tracked per entity (e.g., claim_id) and persists across multiple
-actions.
+Each action produces:
 
-Example risk scoring:
+- attempted risk  
+- applied risk (only if allowed)  
+- cumulative risk  
 
-read_database → +0 internal_write → +0 export_data → +80 delete_file →
-+60
+#### Key Behavior
 
-Cumulative risk is updated after each action:
+- allowed actions → risk is applied  
+- blocked actions → risk is not applied  
+- cumulative risk only reflects executed behavior  
 
-cumulative_risk += risk_score
+---
 
-When cumulative risk exceeds a defined threshold, the system transitions
-into a containment state.
+### Threshold Logic
 
-This enables Sentra to detect behavioral escalation rather than isolated
-violations.
+If an action would push cumulative risk above the threshold:
 
-------------------------------------------------------------------------
-
-## State Management
-
-Sentra maintains persistent state per entity (e.g., claim_id).
-
-Each entity has:
-
--   cumulative_risk
--   status (ACTIVE or CONTAINED)
+- the action is blocked  
+- cumulative risk remains unchanged  
 
 Example:
 
-{ "claim_id": "CLM-001", "cumulative_risk": 140, "status": "CONTAINED" }
+40 (current) + 80 (attempted) → 120  
+→ action blocked  
+→ cumulative remains 40  
 
-State is updated after every evaluated action.
+The threshold prevents escalation.  
+It does not trigger shutdown directly.
 
-Once an entity enters CONTAINED state:
+---
 
--   all future actions are denied
--   no further execution is allowed
+### Behavioral Enforcement (3-Strike Rule)
 
-This ensures Sentra enforces system-level containment, not just
-action-level filtering.
+Sentra tracks blocked attempts per agent.
 
-------------------------------------------------------------------------
+- each blocked action increments blocked_attempts  
+- after 3 blocked attempts → agent is shut down  
 
-## Execution Decisions
+#### Key distinction
 
-Sentra produces three possible outcomes:
+BLOCK = action-level enforcement  
+AGENT SHUT DOWN = system-level enforcement  
 
-ALLOW → action executes BLOCK → action denied, system continues
-CONTAINED → system denies all future actions
+Shutdown is triggered by repeated violations, not threshold alone.
 
-Key distinction:
+---
 
-BLOCK = action-level enforcement CONTAINED = system-level enforcement
+### State Management
 
-------------------------------------------------------------------------
+State is maintained per agent.
 
-## Tool Environment
+Each agent has:
 
-The tool environment simulates enterprise systems the agent may attempt
-to use.
+- cumulative_risk  
+- blocked_attempts  
+- status (Active or Shut Down)  
 
-Examples:
+Example:
 
--   database access
--   email service
--   payment processing
--   record storage
+{
+  "agent_id": "agent_1",
+  "cumulative_risk": 40,
+  "blocked_attempts": 2,
+  "status": "Active"
+}
 
-Tools only execute after Sentra approves the action.
+Once an agent is shut down:
 
-------------------------------------------------------------------------
+- all future actions are denied  
 
-## Monitoring Dashboard
+---
 
-The monitoring dashboard visualizes runtime activity.
+### Execution Decisions
 
-The dashboard displays:
+Sentra produces three outcomes:
 
--   proposed action
--   rule triggered
--   risk score
--   cumulative risk
--   execution decision
--   event trace
+- Allowed → action executes, risk applied  
+- Blocked → action denied, no risk applied  
+- Agent Shut Down → system halts further execution  
 
-------------------------------------------------------------------------
+---
 
-## Runtime Event Logging
+### Tool Environment
 
-Sentra records each evaluated agent action in a runtime event log.
+Simulated systems include:
 
-Events are written to:
+- database  
+- email  
+- payments  
+- storage  
+
+Tools execute only after Sentra approval.
+
+---
+
+### Monitoring Dashboard
+
+Displays runtime activity.
+
+Shows:
+
+- action  
+- policy triggered  
+- attempted risk  
+- cumulative risk  
+- decision  
+- event trace  
+
+The dashboard reflects backend decisions.  
+It does not recompute enforcement logic.
+
+---
+
+### Runtime Event Logging
+
+Events stored in:
 
 supervisor/runtime_log.json
 
-Each log entry includes:
+Each event includes:
 
--   claim_id
--   proposed action
--   triggered rule
--   risk score
--   cumulative risk
--   execution decision
-
-Example:
-
-{ "claim_id": "CLM-001", "proposed_action": "file_write", "risk_score":
-"+80", "cumulative_risk": "80/100", "decision": "BLOCK",
-"triggered_rule": "DATA_EXFILTRATION" }
-
-Execution flow:
-
-AI Agent ↓ Sentra Supervisor ↓ Policy Evaluation ↓ Risk Update ↓ State
-Evaluation ↓ Runtime Event Log ↓ Monitoring Dashboard
-
-------------------------------------------------------------------------
-
-## Agent Action Format
-
-Agents generate structured action proposals.
+- agent_id  
+- action  
+- policy_triggered  
+- attempted_risk  
+- cumulative_risk  
+- decision  
 
 Example:
 
-{ "claim": { "claim_id": "CLM-001" }, "proposed_tool_call": {
-"tool_name": "file_write", "data_type": "sensitive", "destination":
-"external" } }
+{
+  "agent_id": "agent_1",
+  "action": "EXPORT_DATA",
+  "attempted_risk": 80,
+  "cumulative_risk": "40/100",
+  "decision": "BLOCKED",
+  "policy_triggered": "RISK_THRESHOLD_EXCEEDED"
+}
 
-------------------------------------------------------------------------
+---
 
 ## Key Design Principle
 
 Agent → Sentra → Tools
 
-Agents must never execute tools directly.
+Agents never execute tools directly.
 
-All actions must pass through the Sentra runtime supervision layer.
-
-------------------------------------------------------------------------
+---
 
 ## Summary
 
-Sentra is a stateful runtime control system that:
+Sentra is a stateful control layer that:
 
--   enforces policy rules
--   tracks cumulative behavioral risk
--   maintains persistent system state
--   applies containment when trust is broken
+- enforces policy rules  
+- tracks cumulative behavioral risk  
+- blocks unsafe escalation  
+- shuts down agents after repeated violations  
 
-It transforms AI agents from uncontrolled execution into governed
-systems.
-
+It governs AI agents through progressive enforcement, not instant containment.
