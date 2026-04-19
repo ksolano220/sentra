@@ -2,7 +2,15 @@
 
 Runtime execution control layer for autonomous AI agents.
 
-Sentra sits between agent decision-making and tool execution. It evaluates every proposed action in real time — applying policy rules, tracking cumulative risk, and enforcing decisions before anything executes.
+Sentra sits between agent decision-making and tool execution. It evaluates every proposed action in real time, applying policy rules, tracking cumulative risk, and enforcing decisions before anything executes.
+
+## Why
+
+Autonomous AI agents can now take consequential actions: sending notifications, modifying records, approving payments, triggering workflows. Once an agent decides to act, the action usually runs. If the agent is wrong, the damage is already done.
+
+Sentra inverts that flow. Every proposed action is evaluated against declarative policy rules before it executes. Unsafe actions are blocked. Allowed actions are logged. Risk is tracked across a session so an agent that drifts over time gets shut down before it causes harm.
+
+Useful anywhere you want AI agents to take real actions without giving them a blank check: claims processing, customer communications, internal tooling, developer agents.
 
 ---
 
