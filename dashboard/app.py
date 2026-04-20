@@ -9,6 +9,7 @@ st.set_page_config(page_title="Sentra Dashboard", layout="wide")
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 LOG_FILE = BASE_DIR / "supervisor" / "runtime_log.json"
+DEMO_LOG_FILE = BASE_DIR / "dashboard" / "demo_log.json"
 REFRESH_SECONDS = 2
 RISK_THRESHOLD = 100
 
@@ -74,6 +75,8 @@ def load_json(path, default):
 
 def load_logs():
     data = load_json(LOG_FILE, [])
+    if not isinstance(data, list) or not data:
+        data = load_json(DEMO_LOG_FILE, [])
     return data if isinstance(data, list) else []
 
 
