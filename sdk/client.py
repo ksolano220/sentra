@@ -1,26 +1,41 @@
 """
 Sentra Python SDK — drop-in runtime control for any AI agent system.
 
-Usage:
+WHICH METHOD SHOULD I CALL?
+
+In most cases, use `Sentra.guard()` as a decorator on the function that
+performs the side effect. It will raise `PermissionError` if Sentra blocks
+the action, and let the function run otherwise. This is the recommended
+integration for production code.
+
+Use `Sentra.evaluate()` directly only when you need the raw `SentraResult`
+to make custom routing decisions (e.g. fall back to a different action,
+surface the reason to an end user, or log the risk score).
+
+See README.md § "Integrate with your project" for end-to-end examples.
+
+Quick usage:
+
     from sentra.sdk.client import Sentra
 
     sentra = Sentra()
 
-    result = sentra.evaluate(
-        agent_id="my_agent",
-        action="SEND_EMAIL",
-        context={"verified": False}
-    )
+    @sentra.guard("my_agent", "SEND_EMAIL", {"verified": False})
+    def send_email(to, subject, body):
+        ...
 
-    if result.allowed:
-        send_email()
-    else:
-        print(f"Blocked: {result.reason}")
+Behavior when the Sentra server is unreachable:
+  * A `logging.warning` is emitted so missing infrastructure is visible.
+  * The SDK returns a `Blocked` result with `risk_score=100` — fail-safe,
+    never fail-open.
 """
 
+import logging
 import requests
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
+
+_logger = logging.getLogger("sentra.sdk")
 
 
 @dataclass
@@ -47,6 +62,11 @@ class Sentra:
         """
         Evaluate a proposed agent action against Sentra policies.
 
+        Prefer `Sentra.guard()` as a decorator for production integration.
+        Use `evaluate()` directly only when you need the raw `SentraResult`
+        to make custom routing decisions (e.g. fall back to a different
+        action, surface the reason to an end user, or log the risk score).
+
         Args:
             agent_id: Identifier for the agent (used for risk tracking)
             action: Action type (e.g. SEND_NOTIFICATION, EXPORT_DATA, FILE_WRITE)
@@ -55,7 +75,9 @@ class Sentra:
             notification_type: Optional notification type (e.g. approval, rejection)
 
         Returns:
-            SentraResult with allowed, decision, reason, and risk_score
+            SentraResult with allowed, decision, reason, and risk_score.
+            On server errors, a warning is logged and a fail-safe Blocked
+            result is returned (never fail-open).
         """
         payload = {
             "agent_id": agent_id,
@@ -82,6 +104,13 @@ class Sentra:
             )
 
         except requests.ConnectionError:
+            _logger.warning(
+                "Sentra server unreachable at %s — action %r by agent %r "
+                "blocked by fail-safe default. Start the supervisor "
+                "(`uvicorn supervisor.main:app --reload`) or update the SDK "
+                "URL.",
+                self.url, action, agent_id,
+            )
             return SentraResult(
                 allowed=False,
                 decision="Blocked",
@@ -89,6 +118,11 @@ class Sentra:
                 risk_score=100,
             )
         except Exception as e:
+            _logger.warning(
+                "Sentra evaluation failed for action %r by agent %r: %s. "
+                "Blocking by fail-safe default.",
+                action, agent_id, e,
+            )
             return SentraResult(
                 allowed=False,
                 decision="Blocked",
@@ -98,7 +132,13 @@ class Sentra:
 
     def guard(self, agent_id: str, action: str, context: Optional[Dict[str, Any]] = None, **kwargs):
         """
-        Decorator that blocks function execution if Sentra denies the action.
+        Recommended integration. Decorator that blocks function execution
+        if Sentra denies the action.
+
+        Use this instead of calling `evaluate()` directly — it handles the
+        Blocked-vs-Allowed branching for you and raises a clear
+        `PermissionError` on denial, so the protected function body never
+        runs on an unauthorized action.
 
         Usage:
             @sentra.guard("my_agent", "SEND_EMAIL", {"verified": False})
