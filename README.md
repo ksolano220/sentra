@@ -9,7 +9,7 @@ Sentra sits between agent decision-making and tool execution. It evaluates every
 ![Sentra Dashboard](docs/dashboard.png)
 
 > "Amazing idea implementation. Good job, and great work on the project."
-> — IBM Mentor, SkillsBuild AI Experiential Learning Lab
+> *IBM Mentor, SkillsBuild AI Experiential Learning Lab*
 
 ## Why
 
