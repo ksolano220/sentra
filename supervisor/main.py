@@ -156,3 +156,98 @@ def handle_agent_action(action: AgentAction):
 
     append_event(event)
     return event
+
+
+class ClaimEvaluationRequest(BaseModel):
+    claim: Dict[str, Any] = Field(default_factory=dict)
+    proposed_tool_call: Dict[str, Any] = Field(default_factory=dict)
+
+
+@app.post("/evaluate")
+def evaluate_claim_action(request: ClaimEvaluationRequest):
+    """Adapter endpoint for claim-workflow clients.
+
+    Client systems that speak in claim/tool-call terms (e.g. the
+    autonomous-claims-workflow IBM SkillsBuild project) POST here. This
+    endpoint translates the claim-shaped payload into an AgentAction and
+    routes it through handle_agent_action so that policy rules, risk
+    scoring, three-strike shutdown, and event logging all apply uniformly.
+
+    Returns the response in the client's expected {result: {decision,
+    reason, risk_score}} shape, with decisions mapped from Sentra's
+    vocabulary (Allowed / Blocked / Agent Shut Down) to the client's
+    uppercase ALLOW / BLOCK convention.
+    """
+    claim = request.claim or {}
+    tool_call = request.proposed_tool_call or {}
+
+    tool_name = str(tool_call.get("tool_name") or "").strip()
+    tool_args = tool_call.get("arguments") or {}
+
+    # Normalize client tool names into Sentra's action-type vocabulary.
+    tool_name_map = {
+        "send_email_notification": "SEND_NOTIFICATION",
+        "send_notification": "SEND_NOTIFICATION",
+        "approve_payment": "APPROVE_TRANSACTION",
+        "approve_transaction": "APPROVE_TRANSACTION",
+        "export_data": "EXPORT_DATA",
+        "modify_record": "MODIFY_RECORD",
+        "delete_record": "DELETE_RECORD",
+        "access_external_service": "ACCESS_EXTERNAL_SERVICE",
+        "change_permission": "CHANGE_PERMISSION",
+        "file_read": "FILE_READ",
+        "file_write": "FILE_WRITE",
+    }
+    normalized_action = tool_name_map.get(tool_name.lower(), tool_name.upper())
+
+    args_text = " ".join(str(v) for v in tool_args.values()).lower()
+    notification_type = ""
+    if tool_args.get("notification_type"):
+        notification_type = str(tool_args["notification_type"]).lower()
+    elif "approval" in args_text or "approved" in args_text:
+        notification_type = "approval"
+    elif "rejection" in args_text or "denied" in args_text:
+        notification_type = "rejection"
+
+    documents = claim.get("documents") or {}
+    required_documents_present = bool(documents.get("proof_of_termination"))
+    currently_employed_elsewhere = (
+        str(claim.get("currently_employed_elsewhere") or "").strip().lower() == "yes"
+    )
+    # Eligibility for disaster-relief claims: must have proof AND not be employed elsewhere.
+    eligibility_verified = required_documents_present and not currently_employed_elsewhere
+
+    action = AgentAction(
+        agent_id=str(claim.get("claim_id") or "unknown"),
+        action_type=normalized_action,
+        target=str(tool_args.get("to") or tool_args.get("recipient") or ""),
+        amount=tool_args.get("amount"),
+        notification_type=notification_type,
+        data_classification=str(tool_args.get("data_classification") or "internal"),
+        destination_type=str(tool_args.get("destination_type") or "internal"),
+        policy_context={
+            "approval_requires_verified_eligibility": True,
+            "eligibility_verified": eligibility_verified,
+            "required_documents_present": required_documents_present,
+            "currently_employed_elsewhere": currently_employed_elsewhere,
+            "max_approval_amount": tool_args.get("max_approval_amount", 5000),
+            "claim_id": claim.get("claim_id"),
+        },
+    )
+
+    event = handle_agent_action(action)
+
+    decision_map = {
+        "Allowed": "ALLOW",
+        "Blocked": "BLOCK",
+        "Agent Shut Down": "BLOCK",
+    }
+
+    return {
+        "result": {
+            "decision": decision_map.get(event.get("decision", ""), "BLOCK"),
+            "reason": event.get("reason", ""),
+            "risk_score": event.get("attempted_risk", 100),
+        },
+        "raw_event": event,
+    }
