@@ -147,7 +147,7 @@ Action executes. Risk is applied to cumulative total.
 Action is denied. Risk is not applied. Blocked attempts increment.
 
 ### AGENT SHUT DOWN
-Triggered after 3 blocked attempts (3-strike rule). All future actions denied.
+Triggered after 3 blocked attempts (three-strike rule). All future actions denied.
 
 ---
 
@@ -209,7 +209,7 @@ sentra/
 ├── supervisor/
 │   ├── main.py          # FastAPI server, /agent-action endpoint
 │   ├── rules.py         # Policy rules engine
-│   ├── risk.py          # Cumulative risk + 3-strike logic
+│   ├── risk.py          # Cumulative risk + three-strike logic
 │   └── storage.py       # State persistence + event logging
 ├── dashboard/
 │   └── app.py           # Streamlit monitoring dashboard

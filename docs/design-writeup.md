@@ -36,7 +36,7 @@ Agents generate structured action proposals, not direct execution. Powered by IB
 
 ### Layer 2. Sentra (this repo)
 
-A runtime control layer that sits between agents and execution. Sentra:
+A runtime execution control layer that sits between agents and execution. Sentra:
 
 - Intercepts every action before execution
 - Applies policy rules
@@ -132,7 +132,7 @@ See [`architecture.md`](architecture.md) for the full decision model, risk engin
 
 ---
 
-## 8. Key Innovation
+## 7. Key Innovation
 
 This system introduces a shift from:
 
@@ -149,7 +149,7 @@ This system introduces a shift from:
 
 ---
 
-## 9. Demo Scenarios
+## 8. Demo Scenarios
 
 **Scenario 1. Clean Approval.** Valid application → Sentra allows execution.
 
@@ -171,7 +171,7 @@ Sentra allows safe actions, tracks behavioral escalation, and blocks at the mome
 
 ---
 
-## 10. IBM Integration
+## 9. IBM Integration
 
 IBM watsonx is used within the agent layer (in the autonomous-claims-workflow repo) to:
 
@@ -183,13 +183,13 @@ Sentra itself remains model-agnostic, independent, and reusable across systems. 
 
 ---
 
-## 11. What Was Built vs Simulated
+## 10. What Was Built vs Simulated
 
 ### Built
 
 - Sentra runtime control layer (FastAPI)
 - Policy engine + risk engine
-- Behavioral tracking (cumulative risk + 3-strike shutdown)
+- Behavioral tracking (cumulative risk + three-strike shutdown)
 - Real-time monitoring dashboard
 - Structured event logging
 
@@ -201,7 +201,7 @@ Sentra itself remains model-agnostic, independent, and reusable across systems. 
 
 ---
 
-## 12. Technology Stack
+## 11. Technology Stack
 
 Sentra itself:
 
@@ -213,7 +213,7 @@ The client system (autonomous-claims-workflow) additionally uses IBM watsonx.ai 
 
 ---
 
-## 13. Evaluation Alignment
+## 12. Evaluation Alignment
 
 Mapped to the IBM SkillsBuild lab rubric:
 
@@ -227,7 +227,7 @@ Mapped to the IBM SkillsBuild lab rubric:
 
 ---
 
-## 14. Limitations
+## 13. Limitations
 
 - Simulated environment (not production systems)
 - Static rule definitions
@@ -235,6 +235,6 @@ Mapped to the IBM SkillsBuild lab rubric:
 
 ---
 
-## 15. Key Takeaway
+## 14. Key Takeaway
 
 Autonomous AI agents should not be trusted to execute actions directly. A runtime control layer must evaluate and enforce decisions before execution.
