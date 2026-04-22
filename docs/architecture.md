@@ -119,6 +119,18 @@ Sentra tracks blocked attempts per agent.
 - each blocked action increments blocked_attempts  
 - after 3 blocked attempts → agent is shut down  
 
+#### State Diagram
+
+```mermaid
+stateDiagram-v2
+    [*] --> Active
+    Active --> Active : ALLOW (risk applied to cumulative total)
+    Active --> Active : BLOCK (blocked_attempts < 3)
+    Active --> ShutDown : BLOCK (blocked_attempts == 3)
+    ShutDown --> ShutDown : any action denied (AGENT_ALREADY_SHUT_DOWN)
+    ShutDown --> [*] : operator reset
+```
+
 #### Key distinction
 
 BLOCK = action-level enforcement  

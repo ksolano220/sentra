@@ -40,7 +40,9 @@ Sentra gates *actions* at the execution boundary, applies the same rules across 
 ## Docs
 
 - [`docs/design-writeup.md`](docs/design-writeup.md). Project-level writeup: problem statement, two-layer solution, demo scenarios, evaluation alignment.
-- [`docs/architecture.md`](docs/architecture.md). Technical runtime model: policy rules, risk engine, three-strike logic, state management.
+- [`docs/architecture.md`](docs/architecture.md). Technical runtime model: policy rules, risk engine, three-strike logic, state diagram.
+- [`docs/three-strike-walkthrough.md`](docs/three-strike-walkthrough.md). End-to-end curl reproduction of the shutdown sequence against a running server.
+- [`docs/troubleshooting.md`](docs/troubleshooting.md). Common failure modes and how to resolve them.
 
 ---
 
