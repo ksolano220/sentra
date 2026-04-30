@@ -5,6 +5,7 @@ Runtime execution control layer for autonomous AI agents.
 Sentra sits between agent decision-making and tool execution. It evaluates every proposed action in real time, applying policy rules, tracking cumulative risk, and enforcing decisions before anything executes.
 
 **Live dashboard demo:** [view on Streamlit](https://sentra-demo.streamlit.app)
+**Walkthrough video (3 min):** [watch on YouTube](https://youtu.be/KCMCZ2ueu_c)
 
 ![Sentra Dashboard](docs/dashboard.png)
 
